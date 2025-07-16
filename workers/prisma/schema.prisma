@@ -1,0 +1,152 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Course {
+  id            String       @id
+  canvasId      String       @unique
+  title         String
+  subjectId     Int
+  level         String?
+  catalogNumber String?
+  semester      String
+  academicYear  Int?
+  classSection  String?
+  component     String?
+  description   String
+  active        Boolean      @default(false)
+  courseCode    String
+  assignments   Assignment[]
+  subject       Subject      @relation(fields: [subjectId], references: [id])
+  modules       Module[]
+  pages         Page[]
+  instructors   Instructor[] @relation("CourseToInstructor")
+  videos        Video[]      // Added relation to the Video model
+}
+
+model Subject {
+  id       Int      @id @default(autoincrement())
+  name     String   @unique
+  fullName String
+  courses  Course[]
+}
+
+model Instructor {
+  id      Int      @id @default(autoincrement())
+  name    String
+  email   String
+  website String?
+  courses Course[] @relation("CourseToInstructor")
+
+  @@unique([name, email])
+}
+
+model File {
+  id           Int         @id @default(autoincrement())
+  displayName  String
+  key          String?     @unique
+  type         String
+  createdAt    DateTime?   @default(now())
+  moduleId     Int?
+  assignmentId Int?
+  importance   Importance? @default(main)
+  position     Int         @default(0)
+  url          String?
+  hidden       Boolean     @default(false)
+  assignment   Assignment? @relation(fields: [assignmentId], references: [id])
+  Module       Module?     @relation(fields: [moduleId], references: [id])
+}
+
+model Module {
+  id          Int          @id @default(autoincrement())
+  name        String
+  courseId    String
+  createdAt   DateTime?
+  description String?
+  position    Int
+  assignments Assignment[]
+  files       File[]
+  course      Course       @relation(fields: [courseId], references: [id])
+}
+
+model Assignment {
+  id          Int       @id
+  name        String
+  description String?
+  dueAt       DateTime?
+  courseId    String
+  moduleId    Int?
+  course      Course    @relation(fields: [courseId], references: [id])
+  Module      Module?   @relation(fields: [moduleId], references: [id])
+  files       File[]
+}
+
+model Page {
+  id        Int       @id
+  name      String
+  courseId  String
+  content   String
+  frontPage Boolean   @default(false)
+  createdAt DateTime?
+  course    Course    @relation(fields: [courseId], references: [id])
+}
+
+model Video {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  url         String   @unique
+  courseId    String
+  createdAt   DateTime @default(now())
+  course      Course   @relation(fields: [courseId], references: [id])
+}
+
+model Job {
+  id         Int      @id @default(autoincrement())
+  videoUrl   String
+  fileName   String
+  instructor String
+  courseId   String
+  status     JobStatus @default(PENDING)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([videoUrl, courseId])
+}
+
+model Tokens {
+  id           Int      @id @default(autoincrement())
+  accessToken  String
+  refreshToken String
+  userName     String?
+  userImage    String?
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([expiresAt])
+}
+
+model SystemSetting {
+  key   String @id
+  value String
+}
+
+enum Importance {
+  main
+  supplementary
+}
+
+enum JobStatus {
+  PENDING
+  IN_PROGRESS
+  FAILED
+  COMPLETED
+}

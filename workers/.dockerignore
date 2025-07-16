@@ -1,0 +1,15 @@
+node_modules/
+data/
+.DS_Store
+tmp/
+.env
+dist/
+.next
+
+.env*
+.flaskenv*
+!.env.project
+!.env.vault
+
+# Test coverage
+coverage/

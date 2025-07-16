@@ -1,0 +1,40 @@
+services:
+  # Redis for job queuing (optional)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: coursetexts-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  # YouTube Worker Service
+  youtube-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: coursetexts-youtube-worker
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount for file downloads/uploads
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# volumes:
+#   postgres_data:
+#   redis_data:
