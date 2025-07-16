@@ -1,0 +1,16 @@
+I want to create a pipeline that blurs the faces of people in the videos except for the professor. currently the nodejs code in the worker folder downloads the videos from panopto or whatever source as a readable stream and uploads it directly to youtube.
+
+i want to go away from this and insert the blurring step in the pipeline. Using the deface library in the /deface-with-selective-face-blurring folder. ideally instead of downloading the stream, i want to download the video temporarily then blur the faces and the upload to youtube.
+
+The initial streaming method was perfect since we were working in limited memomy. but now since we need to blur, the app will be deployed on a VM with large memory, disk space and GPU for the deep learning model.
+
+so here is the plan:
+- get link from DB in worker
+- Get the professor name in the instructor field
+- Scrape the internet (maybe google images) for the professor's face
+- Store the face in a folder (atleast 10 images)
+- Download the video from the link into a folder
+- Use the deface library to blur the faces with the video and image targets
+- Upload the blurred video to youtube with metadata as currently is.
+
+Seeing as this will be two different environments python and nodejs, this will have to be done using docker containers, so create the docker images/containers.
