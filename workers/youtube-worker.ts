@@ -345,7 +345,7 @@ async function processJobs() {
             console.log(`Cleaned up job directory: ${sharedPaths.jobDir}`);
           }
         } catch (cleanupError) {
-          console.warn(`Failed to cleanup job directory: ${cleanupError.message}`);
+          console.warn(`Failed to cleanup job directory: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
         }
 
         // Force GC after successful upload as it's memory intensive
@@ -383,7 +383,7 @@ async function processJobs() {
             fs.rmSync(sharedPaths.jobDir, { recursive: true, force: true });
           }
         } catch (cleanupError) {
-          console.warn(`Failed to cleanup after failure: ${cleanupError.message}`);
+          console.warn(`Failed to cleanup after failure: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
         }
       }
     } catch (error: unknown) {
