@@ -1,0 +1,273 @@
+name: Deploy Pipeline to GCP
+
+on:
+  push:
+    branches: [main, add-monitoring-server]
+    paths:
+      - 'workers/**'
+      - 'deface-with-selective-face-blurring/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy-to-gcp.yml'
+  workflow_dispatch:  # Allow manual triggering
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCR_REGISTRY: gcr.io
+  VM_INSTANCE: ${{ secrets.GCP_VM_INSTANCE }}
+  VM_ZONE: ${{ secrets.GCP_VM_ZONE }}
+  
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+        
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker
+      
+    - name: Build Workers Docker image
+      run: |
+        docker build -t $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:$GITHUB_SHA \
+                     -t $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:latest \
+                     ./workers
+                     
+    - name: Build Face Processor Docker image
+      run: |
+        docker build -t $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:$GITHUB_SHA \
+                     -t $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:latest \
+                     ./deface-with-selective-face-blurring
+                     
+    - name: Push Workers image to GCR
+      run: |
+        docker push $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:$GITHUB_SHA
+        docker push $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:latest
+        
+    - name: Push Face Processor image to GCR
+      run: |
+        docker push $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:$GITHUB_SHA
+        docker push $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:latest
+        
+    - name: Create deployment docker-compose
+      run: |
+        cat > docker-compose.production.yml << 'EOF'
+        version: '3.8'
+        
+        services:
+          workers:
+            image: ${{ env.GCR_REGISTRY }}/${{ env.PROJECT_ID }}/pipeline-workers:${{ github.sha }}
+            container_name: pipeline-workers
+            ports:
+              - "3000:3000"
+            volumes:
+              - shared_storage:/app/shared
+              - ./logs:/app/logs
+            depends_on:
+              - face-processor
+            restart: unless-stopped
+            environment:
+              - FACE_PROCESSOR_URL=http://face-processor:5000
+            env_file:
+              - .env
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+              start_period: 40s
+
+          face-processor:
+            image: ${{ env.GCR_REGISTRY }}/${{ env.PROJECT_ID }}/pipeline-face-processor:${{ github.sha }}
+            container_name: pipeline-face-processor
+            ports:
+              - "5000:5000"
+            volumes:
+              - shared_storage:/app/shared
+            restart: unless-stopped
+            environment:
+              - PYTHONUNBUFFERED=1
+              - CUDA_VISIBLE_DEVICES=0
+            deploy:
+              resources:
+                reservations:
+                  devices:
+                    - driver: nvidia
+                      count: 1
+                      capabilities: [gpu]
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+              start_period: 60s
+
+        volumes:
+          shared_storage:
+            driver: local
+        EOF
+        
+    - name: Create deployment script
+      run: |
+        cat > deploy.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        echo "🚀 Starting pipeline deployment..."
+        
+        # Configure Docker for GCR
+        gcloud auth configure-docker --quiet
+        
+        # Stop existing services
+        echo "⏹️ Stopping existing services..."
+        docker-compose -f docker-compose.production.yml down --remove-orphans || true
+        
+        # Pull latest images
+        echo "📥 Pulling latest images..."
+        docker pull ${{ env.GCR_REGISTRY }}/${{ env.PROJECT_ID }}/pipeline-workers:${{ github.sha }}
+        docker pull ${{ env.GCR_REGISTRY }}/${{ env.PROJECT_ID }}/pipeline-face-processor:${{ github.sha }}
+        
+        # Start services
+        echo "🆙 Starting services..."
+        docker-compose -f docker-compose.production.yml up -d
+        
+        # Wait for services to be ready
+        echo "⏳ Waiting for services to be ready..."
+        sleep 30
+        
+        # Health checks
+        echo "🔍 Checking service health..."
+        
+        # Check workers service
+        if curl -s -f http://localhost:3000/health > /dev/null; then
+            echo "✅ Workers service: Healthy"
+        else
+            echo "❌ Workers service: Not responding"
+            exit 1
+        fi
+        
+        # Check face processor service
+        if curl -s -f http://localhost:5000/health > /dev/null; then
+            echo "✅ Face processor service: Healthy"
+        else
+            echo "❌ Face processor service: Not responding"
+            exit 1
+        fi
+        
+        echo "🎉 Deployment successful!"
+        
+        # Show running containers
+        echo "📊 Running containers:"
+        docker-compose -f docker-compose.production.yml ps
+        EOF
+        
+        chmod +x deploy.sh
+        
+    - name: Copy files to VM
+      run: |
+        # Create SSH key file
+        echo "${{ secrets.GCP_VM_SSH_KEY }}" > /tmp/ssh_key
+        chmod 600 /tmp/ssh_key
+        
+        # Create deployment directory on VM
+        gcloud compute ssh $VM_INSTANCE \
+          --zone=$VM_ZONE \
+          --ssh-key-file=/tmp/ssh_key \
+          --command="mkdir -p ~/pipeline-deployment"
+        
+        # Copy deployment files
+        gcloud compute scp docker-compose.production.yml deploy.sh \
+          $VM_INSTANCE:~/pipeline-deployment/ \
+          --zone=$VM_ZONE \
+          --ssh-key-file=/tmp/ssh_key
+          
+    - name: Create environment file on VM
+      run: |
+        # Create .env file with secrets
+        cat > .env.production << 'EOF'
+        DATABASE_URL=${{ secrets.DATABASE_URL }}
+        GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+        GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+        ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+        ENCRYPTION_SALT=${{ secrets.ENCRYPTION_SALT }}
+        NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
+        FACE_PROCESSOR_URL=http://face-processor:5000
+        JOB_PROCESSING_INTERVAL=43200000
+        TOKEN_CLEANUP_INTERVAL=43200000
+        EOF
+        
+        # Copy environment file
+        gcloud compute scp .env.production \
+          $VM_INSTANCE:~/pipeline-deployment/.env \
+          --zone=$VM_ZONE \
+          --ssh-key-file=/tmp/ssh_key
+          
+    - name: Deploy to VM
+      run: |
+        gcloud compute ssh $VM_INSTANCE \
+          --zone=$VM_ZONE \
+          --ssh-key-file=/tmp/ssh_key \
+          --command="cd ~/pipeline-deployment && ./deploy.sh"
+          
+    - name: Setup log monitoring (optional)
+      run: |
+        gcloud compute ssh $VM_INSTANCE \
+          --zone=$VM_ZONE \
+          --ssh-key-file=/tmp/ssh_key \
+          --command="
+            # Create log monitoring script
+            cat > ~/monitor-pipeline.sh << 'MONITOR_EOF'
+        #!/bin/bash
+        echo '📊 Pipeline Status Check'
+        echo '======================='
+        
+        cd ~/pipeline-deployment
+        
+        echo '🐳 Container Status:'
+        docker-compose -f docker-compose.production.yml ps
+        
+        echo ''
+        echo '💾 Disk Usage:'
+        df -h | grep -E '^/dev/'
+        
+        echo ''
+        echo '🖥️ Memory Usage:'
+        free -h
+        
+        echo ''
+        echo '🔥 Recent Logs (last 10 lines):'
+        echo 'Workers:'
+        docker-compose -f docker-compose.production.yml logs --tail=10 workers
+        echo ''
+        echo 'Face Processor:'
+        docker-compose -f docker-compose.production.yml logs --tail=10 face-processor
+        MONITOR_EOF
+            
+            chmod +x ~/monitor-pipeline.sh
+            echo '✅ Monitoring script created at ~/monitor-pipeline.sh'
+          "
+          
+    - name: Cleanup
+      run: |
+        rm -f /tmp/ssh_key .env.production
+        
+    - name: Deployment Summary
+      run: |
+        echo "🎬 Pipeline Deployment Complete!"
+        echo "================================="
+        echo "Workers Image: $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:$GITHUB_SHA"
+        echo "Face Processor Image: $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:$GITHUB_SHA"
+        echo "VM Instance: $VM_INSTANCE"
+        echo "Zone: $VM_ZONE"
+        echo ""
+        echo "📋 Next Steps:"
+        echo "1. Check service health: gcloud compute ssh $VM_INSTANCE --zone=$VM_ZONE --command='~/monitor-pipeline.sh'"
+        echo "2. View logs: gcloud compute ssh $VM_INSTANCE --zone=$VM_ZONE --command='cd ~/pipeline-deployment && docker-compose -f docker-compose.production.yml logs -f'"
+        echo "3. Add jobs to your database to start processing videos"
