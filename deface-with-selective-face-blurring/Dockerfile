@@ -56,7 +56,7 @@ RUN pip3 cache purge && \
     find /usr/local/lib/python3.*/dist-packages -name "__pycache__" -type d -exec rm -rf {} + || true
 
 # Production stage
-FROM nvidia/cuda:11.8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.9.1-runtime-ubuntu22.04
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
