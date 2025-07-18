@@ -60,7 +60,7 @@ ENV PRISMA_CLI_BINARY_TARGETS=debian-openssl-3.0.x
 # RUN yarn prisma:generate  # Comment this out
 
 # Build the application (this should work without Prisma client for now)
-RUN yarn build || echo "Build may fail without Prisma, will generate at runtime"
+RUN yarn build --transpile-only || echo "Build failed, will use ts-node at runtime"
 
 # Create shared directory for inter-service communication
 RUN mkdir -p /app/shared
@@ -142,4 +142,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
 
 # Start the application
-CMD ["yarn", "start"]
+CMD ["/app/start.sh"]
