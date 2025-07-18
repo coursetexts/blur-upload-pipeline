@@ -89,6 +89,38 @@ jobs:
         service_account_key: ${{ secrets.GCP_SA_KEY }}
         export_default_credentials: true
         
+    - name: Verify authentication and setup
+      run: |
+        echo "🔍 Verifying GCP authentication..."
+        
+        # Check if gcloud is authenticated
+        gcloud auth list
+        
+        # Verify project ID
+        echo "Current project: $(gcloud config get-value project)"
+        
+        # Test GCP access
+        gcloud projects describe ${{ secrets.GCP_PROJECT_ID }} || {
+          echo "❌ Cannot access project ${{ secrets.GCP_PROJECT_ID }}"
+          echo "Please verify GCP_PROJECT_ID secret"
+          exit 1
+        }
+        
+        # Enable Container Registry API if not already enabled
+        gcloud services enable containerregistry.googleapis.com
+        
+        # Verify Container Registry access
+        gcloud auth configure-docker --quiet
+        
+        # Test authentication with a simple command
+        gcloud container images list --repository=gcr.io/${{ secrets.GCP_PROJECT_ID }} || {
+          echo "❌ Cannot access Container Registry"
+          echo "Please check service account permissions"
+          exit 1
+        }
+        
+        echo "✅ Authentication successful"
+        
     - name: Configure Docker for GCR
       run: gcloud auth configure-docker
       
