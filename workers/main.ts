@@ -4,8 +4,19 @@ import * as v8 from 'v8';
 import express from 'express';
 import basicAuth from 'express-basic-auth';
 import dotenv from 'dotenv';
+import { execSync } from 'child_process';
 
 dotenv.config();
+
+// Generate Prisma client at startup
+try {
+  console.log('Generating Prisma client...');
+  execSync('npx prisma generate --schema ./prisma/schema.prisma', { stdio: 'inherit' });
+  console.log('Prisma client generated successfully');
+} catch (error) {
+  console.error('Failed to generate Prisma client:', error);
+  process.exit(1);
+}
 
 // Log main thread memory before starting worker
 console.log('Main thread memory before worker:', {
