@@ -24,6 +24,64 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
+    - name: Free up disk space
+      run: |
+        echo "🧹 Freeing up disk space..."
+        
+        # Show initial disk usage
+        echo "Initial disk usage:"
+        df -h
+        
+        # Remove unnecessary software packages
+        sudo apt-get remove -y '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' '^postgresql-.*' '^mysql-.*' '^mongodb-.*'
+        sudo apt-get autoremove -y
+        sudo apt-get autoclean
+        
+        # Remove large directories
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/local/graalvm/
+        sudo rm -rf /usr/local/share/chromium
+        sudo rm -rf /usr/local/share/chromedriver-linux64
+        sudo rm -rf /usr/local/share/gecko_driver
+        sudo rm -rf /usr/local/share/phantomjs*
+        sudo rm -rf /usr/local/share/vcpkg
+        sudo rm -rf /usr/local/lib/node_modules
+        sudo rm -rf /opt/az
+        sudo rm -rf /opt/mssql-tools
+        
+        # Clear various caches
+        sudo rm -rf /var/cache/apt/archives
+        sudo rm -rf /tmp/*
+        sudo rm -rf /var/tmp/*
+        
+        # Docker cleanup
+        docker system prune -af --volumes || true
+        
+        # Show disk usage after cleanup
+        echo "Disk usage after cleanup:"
+        df -h
+        
+        # Ensure we have at least 10GB free
+        available_space=$(df / | awk 'NR==2 {print $4}')
+        echo "Available space: ${available_space}KB"
+        if [ "$available_space" -lt 10485760 ]; then
+          echo "❌ Still not enough space (need ~10GB), trying more aggressive cleanup..."
+          
+          # More aggressive cleanup
+          sudo rm -rf /usr/local/lib/python*
+          sudo rm -rf /opt/pipx
+          sudo rm -rf /usr/share/doc
+          sudo rm -rf /usr/share/man
+          sudo rm -rf /var/log/*
+          
+          # Final check
+          df -h
+        fi
+        
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
       with:
@@ -34,28 +92,65 @@ jobs:
     - name: Configure Docker for GCR
       run: gcloud auth configure-docker
       
-    - name: Build Workers Docker image
+    - name: Build Workers Docker image (smaller first)
       run: |
-        docker build -t $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:$GITHUB_SHA \
-                     -t $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:latest \
-                     ./workers
-                     
-    - name: Build Face Processor Docker image
+        echo "🔨 Building Workers image..."
+        docker build \
+          --no-cache \
+          -t $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:$GITHUB_SHA \
+          -t $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:latest \
+          ./workers
+        
+        # Show disk usage after workers build
+        echo "Disk usage after workers build:"
+        df -h
+        
+    - name: Push Workers image early
       run: |
-        docker build -t $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:$GITHUB_SHA \
-                     -t $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:latest \
-                     ./deface-with-selective-face-blurring
-                     
-    - name: Push Workers image to GCR
-      run: |
+        echo "📤 Pushing Workers image..."
         docker push $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:$GITHUB_SHA
         docker push $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:latest
         
-    - name: Push Face Processor image to GCR
+        # Remove workers image locally to free space
+        docker rmi $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:$GITHUB_SHA || true
+        docker rmi $GCR_REGISTRY/$PROJECT_ID/pipeline-workers:latest || true
+        docker system prune -f
+        
+        echo "Disk usage after workers push and cleanup:"
+        df -h
+        
+    - name: Build Face Processor Docker image (with aggressive space management)
       run: |
+        echo "🔨 Building Face Processor image..."
+        
+        # Clear any remaining Docker cache
+        docker system prune -af --volumes
+        
+        # Build with limited cache and immediate cleanup
+        docker build \
+          --no-cache \
+          --force-rm \
+          -t $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:$GITHUB_SHA \
+          ./deface-with-selective-face-blurring
+        
+        # Tag latest
+        docker tag $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:$GITHUB_SHA \
+                   $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:latest
+        
+    - name: Push Face Processor image immediately
+      run: |
+        echo "📤 Pushing Face Processor image..."
         docker push $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:$GITHUB_SHA
         docker push $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:latest
         
+        # Clean up immediately
+        docker rmi $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:$GITHUB_SHA || true
+        docker rmi $GCR_REGISTRY/$PROJECT_ID/pipeline-face-processor:latest || true
+        docker system prune -af --volumes
+        
+        echo "Final disk usage:"
+        df -h
+
     - name: Create deployment docker-compose
       run: |
         cat > docker-compose.production.yml << 'EOF'
