@@ -52,6 +52,9 @@ RUN yarn install --frozen-lockfile
 # Copy source code
 COPY . .
 
+# Set Prisma environment variable to skip checksum validation
+ENV PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
+
 # Generate Prisma client
 RUN yarn prisma:generate
 
