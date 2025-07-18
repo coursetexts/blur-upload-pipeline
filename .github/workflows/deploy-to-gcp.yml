@@ -2,7 +2,7 @@ name: Deploy Pipeline to GCP
 
 on:
   push:
-    branches: [main, add-monitoring-server]
+    branches: [main]
     paths:
       - 'workers/**'
       - 'deface-with-selective-face-blurring/**'
