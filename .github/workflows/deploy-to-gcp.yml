@@ -325,21 +325,54 @@ jobs:
         
     - name: Copy files to VM
       run: |
-        # Create SSH key file
+        # Create SSH key files
         echo "${{ secrets.GCP_VM_SSH_KEY }}" > /tmp/ssh_key
         chmod 600 /tmp/ssh_key
         
-        # Create deployment directory on VM
+        # Generate public key from private key
+        ssh-keygen -y -f /tmp/ssh_key > /tmp/ssh_key.pub
+        chmod 644 /tmp/ssh_key.pub
+        
+        # Create deployment directory on VM and verify Docker
         gcloud compute ssh $VM_INSTANCE \
           --zone=$VM_ZONE \
           --ssh-key-file=/tmp/ssh_key \
-          --command="mkdir -p ~/pipeline-deployment"
+          --strict-host-key-checking=no \
+          --quiet \
+          --command="
+            mkdir -p ~/pipeline-deployment
+            
+            # Check if Docker is installed and running
+            if ! command -v docker &> /dev/null; then
+              echo '❌ Docker is not installed on the VM'
+              exit 1
+            fi
+            
+            # Check if Docker daemon is running
+            if ! docker info &> /dev/null; then
+              echo '⚠️ Docker daemon is not running, attempting to start...'
+              sudo systemctl start docker || {
+                echo '❌ Failed to start Docker daemon'
+                exit 1
+              }
+            fi
+            
+            # Verify Docker Compose is available
+            if ! command -v docker-compose &> /dev/null; then
+              echo '❌ Docker Compose is not installed on the VM'
+              exit 1
+            fi
+            
+            echo '✅ VM environment verified successfully'
+          "
         
         # Copy deployment files
         gcloud compute scp docker-compose.production.yml deploy.sh \
           $VM_INSTANCE:~/pipeline-deployment/ \
           --zone=$VM_ZONE \
-          --ssh-key-file=/tmp/ssh_key
+          --ssh-key-file=/tmp/ssh_key \
+          --strict-host-key-checking=no \
+          --quiet
           
     - name: Create environment file on VM
       run: |
@@ -360,13 +393,17 @@ jobs:
         gcloud compute scp .env.production \
           $VM_INSTANCE:~/pipeline-deployment/.env \
           --zone=$VM_ZONE \
-          --ssh-key-file=/tmp/ssh_key
+          --ssh-key-file=/tmp/ssh_key \
+          --strict-host-key-checking=no \
+          --quiet
           
     - name: Deploy to VM
       run: |
         gcloud compute ssh $VM_INSTANCE \
           --zone=$VM_ZONE \
           --ssh-key-file=/tmp/ssh_key \
+          --strict-host-key-checking=no \
+          --quiet \
           --command="cd ~/pipeline-deployment && ./deploy.sh"
           
     - name: Setup log monitoring (optional)
@@ -374,6 +411,8 @@ jobs:
         gcloud compute ssh $VM_INSTANCE \
           --zone=$VM_ZONE \
           --ssh-key-file=/tmp/ssh_key \
+          --strict-host-key-checking=no \
+          --quiet \
           --command="
             # Create log monitoring script
             cat > ~/monitor-pipeline.sh << 'MONITOR_EOF'
@@ -409,7 +448,7 @@ jobs:
           
     - name: Cleanup
       run: |
-        rm -f /tmp/ssh_key .env.production
+        rm -f /tmp/ssh_key /tmp/ssh_key.pub .env.production
         
     - name: Deployment Summary
       run: |
