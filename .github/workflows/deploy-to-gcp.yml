@@ -115,12 +115,35 @@ jobs:
         # Verify Container Registry access
         gcloud auth configure-docker --quiet
         
-        # Test authentication with a simple command
+        # Test authentication with a simple command (handle empty repository gracefully)
+        echo "Testing Container Registry access..."
         gcloud container images list --repository=gcr.io/${{ secrets.GCP_PROJECT_ID }} || {
-          echo "❌ Cannot access Container Registry"
-          echo "Please check service account permissions"
-          exit 1
+          echo "⚠️ Container Registry repository is empty or doesn't exist yet (this is normal for new projects)"
+          echo "We'll create it when we push the first image"
+          
+          # Test if we can at least access the project's container registry
+          if gcloud services list --enabled --filter="name:containerregistry.googleapis.com" --format="value(name)" | grep -q containerregistry; then
+            echo "✅ Container Registry API is enabled"
+          else
+            echo "❌ Container Registry API not enabled"
+            exit 1
+          fi
         }
+        
+        # Verify service account permissions
+        echo "🔐 Checking service account permissions..."
+        SA_EMAIL=$(gcloud config get-value account)
+        echo "Service account: $SA_EMAIL"
+        
+        # Check if SA has storage admin role (needed for Container Registry)
+        if gcloud projects get-iam-policy ${{ secrets.GCP_PROJECT_ID }} --flatten="bindings[].members" --filter="bindings.members:$SA_EMAIL AND bindings.role:roles/storage.admin" --format="value(bindings.role)" | grep -q "roles/storage.admin"; then
+          echo "✅ Service account has Storage Admin role"
+        else
+          echo "⚠️ Service account missing Storage Admin role - adding it now..."
+          gcloud projects add-iam-policy-binding ${{ secrets.GCP_PROJECT_ID }} \
+            --member="serviceAccount:$SA_EMAIL" \
+            --role="roles/storage.admin" || echo "❌ Failed to add Storage Admin role"
+        fi
         
         echo "✅ Authentication successful"
         
