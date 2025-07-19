@@ -41,7 +41,7 @@ export async function scrapeProfessorImages(
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    // Launch browser
+    // Launch browser with more stealth
     browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -51,44 +51,139 @@ export async function scrapeProfessorImages(
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-features=VizDisplayCompositor'
       ]
     });
 
     const page = await browser.newPage();
     
-    // Set user agent to avoid detection
+    // More realistic browser setup
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1920, height: 1080 });
     
-    // Construct search query
-    const searchQuery = `${professorName} professor university academic`;
-    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&tbm=isch&tbs=itp:face,isz:m`;
+    // Set extra headers
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    });
+    
+    // Try the newer Google Images URL structure
+    const searchQuery = `${professorName} professor`;
+    // Use the new udm=2 parameter that Google redirected to
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&udm=2`;
     
     console.log(`Searching: ${searchQuery}`);
     
-    // Navigate to Google Images
-    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+    // Navigate to Google Images with the new URL
+    await page.goto(searchUrl, { 
+      waitUntil: 'networkidle2', 
+      timeout: 30000 
+    });
     
-    // Wait for images to load
-    await page.waitForSelector('img[data-src], img[src]', { timeout: 10000 });
+    // Wait for content to load
+    await new Promise(resolve => setTimeout(resolve, 3000));
     
-    // Scroll to load more images
+    // Check what we actually got
+    const pageInfo = await page.evaluate(() => ({
+      title: document.title,
+      url: window.location.href,
+      isImagePage: window.location.href.includes('udm=2') || window.location.href.includes('tbm=isch'),
+      hasImageResults: document.querySelector('[data-ved*="img"]') !== null || 
+                      document.querySelector('.rg_i') !== null ||
+                      document.querySelector('[role="img"]') !== null
+    }));
+    
+    console.log(`Page info: ${pageInfo.title}`);
+    console.log(`Is image page: ${pageInfo.isImagePage}`);
+    
+    if (!pageInfo.isImagePage) {
+      // If we're still not on an image page, try the old method as fallback
+      console.log('Trying fallback URL...');
+      const fallbackUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&source=lnms&tbm=isch`;
+      await page.goto(fallbackUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    // Scroll to trigger more image loading
     await autoScroll(page);
     
-    // Extract image URLs
+    // Wait for dynamic content
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Extract image URLs with multiple methods
     const imageUrls = await page.evaluate(() => {
-      const images = document.querySelectorAll('img');
       const urls: string[] = [];
       
-      images.forEach((img) => {
-        const src = (img as HTMLImageElement).src || (img as any).dataset?.src;
-        if (src && 
-            src.startsWith('http') && 
-            !src.includes('gstatic.com') &&
-            !src.includes('googleusercontent.com') &&
-            !src.includes('data:image') &&
-            src.includes('://')) {
-          urls.push(src);
+      // Method 1: Look for various image selectors used by Google
+      const selectors = [
+        'img[src*="http"]',
+        '[data-src*="http"]',
+        '[style*="background-image"]',
+        'img[data-iml]',
+        '.rg_i img',
+        '[role="img"] img'
+      ];
+      
+      selectors.forEach(selector => {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(element => {
+          let src = '';
+          
+          if (element.tagName === 'IMG') {
+            const img = element as HTMLImageElement;
+            src = img.src || img.dataset?.src || '';
+          } else {
+            // Check for background images
+            const style = (element as HTMLElement).style.backgroundImage;
+            if (style && style.includes('url(')) {
+              const match = style.match(/url\(['"]?([^'"]+)['"]?\)/);
+              if (match) src = match[1];
+            }
+          }
+          
+          // Filter for actual image URLs
+          if (src && 
+              src.startsWith('http') && 
+              !src.includes('gstatic.com') &&
+              !src.includes('googlelogo') &&
+              !src.includes('data:image') &&
+              (src.includes('.jpg') || src.includes('.jpeg') || src.includes('.png') || src.includes('.webp') ||
+               src.includes('images') || src.includes('photo') || src.includes('pic')) &&
+              src.length > 50) {
+            urls.push(src);
+          }
+        });
+      });
+      
+      // Method 2: Look in onclick handlers and href attributes for image URLs
+      const links = document.querySelectorAll('a[href*="imgurl"], a[href*="imgres"]');
+      links.forEach(link => {
+        const href = (link as HTMLAnchorElement).href;
+        try {
+          const url = new URL(href);
+          const imgUrl = url.searchParams.get('imgurl');
+          if (imgUrl && imgUrl.startsWith('http') && imgUrl.length > 50) {
+            urls.push(decodeURIComponent(imgUrl));
+          }
+        } catch (e) {
+          // Skip invalid URLs
+        }
+      });
+      
+      // Method 3: Check for JSON-LD or other structured data
+      const scripts = document.querySelectorAll('script');
+      scripts.forEach(script => {
+        const content = script.textContent || '';
+        // Look for URLs in script content
+        const urlMatches = content.match(/https?:\/\/[^\s"'<>]+\.(jpg|jpeg|png|webp)/gi);
+        if (urlMatches) {
+          urlMatches.forEach(url => {
+            if (url.length > 50 && !url.includes('gstatic.com')) {
+              urls.push(url);
+            }
+          });
         }
       });
       
@@ -97,22 +192,37 @@ export async function scrapeProfessorImages(
 
     console.log(`Found ${imageUrls.length} potential image URLs`);
     
+    if (imageUrls.length > 0) {
+      console.log('Sample URLs:');
+      imageUrls.slice(0, 3).forEach((url, i) => {
+        console.log(`  ${i + 1}: ${url.substring(0, 80)}...`);
+      });
+    }
+    
     // Download images
     const downloadPromises = imageUrls.slice(0, maxImages).map(async (url, index) => {
       try {
+        console.log(`Downloading image ${index + 1}/${Math.min(maxImages, imageUrls.length)}: ${url.substring(0, 60)}...`);
+        
         const response = await axios.get(url, {
           responseType: 'arraybuffer',
-          timeout: 10000,
+          timeout: 15000,
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://www.google.com/'
+            'Referer': 'https://www.google.com/',
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
           }
         });
 
         // Validate it's an image
         const contentType = response.headers['content-type'];
         if (!contentType || !contentType.startsWith('image/')) {
-          throw new Error('Not a valid image file');
+          throw new Error(`Not a valid image file (content-type: ${contentType})`);
+        }
+        
+        // Check file size (skip tiny images)
+        if (response.data.length < 1000) {
+          throw new Error('Image too small (likely a placeholder)');
         }
 
         // Generate filename
@@ -124,11 +234,11 @@ export async function scrapeProfessorImages(
         // Save image
         fs.writeFileSync(filepath, response.data);
         
-        console.log(`Downloaded: ${filename} (${Math.round(response.data.length / 1024)}KB)`);
+        console.log(`✅ Downloaded: ${filename} (${Math.round(response.data.length / 1024)}KB)`);
         return filepath;
         
       } catch (error) {
-        console.warn(`Failed to download image ${index + 1}: ${error.message}`);
+        console.warn(`❌ Failed to download image ${index + 1}: ${error.message}`);
         result.errors.push(`Image ${index + 1}: ${error.message}`);
         return null;
       }
@@ -144,7 +254,7 @@ export async function scrapeProfessorImages(
     console.log(`Successfully downloaded ${successfulPaths.length} images for ${professorName}`);
     
     if (successfulPaths.length === 0) {
-      result.errors.push('No images could be downloaded');
+      result.errors.push('No images could be downloaded - Google may be blocking scraping attempts');
     }
 
   } catch (error) {
@@ -163,8 +273,8 @@ export async function scrapeProfessorImages(
  * Auto-scroll the page to load more images
  */
 async function autoScroll(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    await new Promise<void>((resolve) => {
+  await page.evaluate(() => {
+    return new Promise<void>((resolve) => {
       let totalHeight = 0;
       const distance = 100;
       const timer = setInterval(() => {
@@ -172,7 +282,7 @@ async function autoScroll(page: Page): Promise<void> {
         window.scrollBy(0, distance);
         totalHeight += distance;
 
-        if (totalHeight >= scrollHeight || totalHeight > 2000) {
+        if (totalHeight >= scrollHeight || totalHeight > 1500) {
           clearInterval(timer);
           resolve();
         }
