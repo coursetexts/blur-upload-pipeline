@@ -80,6 +80,7 @@ export async function downloadVideo(
       url: streamUrl,
       responseType: "stream",
       timeout: 60000, // 60 seconds timeout
+      validateStatus: (status) => true, // Accept all status codes for debugging
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": referer || videoUrl,
@@ -87,7 +88,16 @@ export async function downloadVideo(
       },
     });
 
+    // Log more details about the response
+    console.log(`Video response status: ${response.status}`);
     if (response.status !== 200) {
+      console.error(
+        `Video download error response: ${JSON.stringify({
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        })}`
+      );
       result.error = `Failed to download video: ${response.status} ${response.statusText}`;
       return result;
     }
@@ -148,81 +158,203 @@ export async function downloadVideo(
 
 /**
  * Extracts the actual MP4 URL from a Zoom recording page
- * (Reused from existing youtube.ts logic)
+ * Uses the same robust implementation as youtube.ts
  */
 async function extractZoomMp4Url(zoomUrl: string): Promise<ZoomExtractionResult> {
-  let browser: Browser | null = null;
+  console.log(`[⏳] Extracting MP4 URL from Zoom recording: ${zoomUrl}`);
+  console.log(`[📊] Memory at start:`, process.memoryUsage());
+
+  // Launch Puppeteer in headful mode with higher timeout
+  const browser = await puppeteer.launch({
+    headless: true, // Set to true for production
+    timeout: 0, // Disable navigation timeout
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu',
+      '--start-maximized'
+    ]
+  });
+
+  console.log(`[📊] Memory after browser launch:`, process.memoryUsage());
   
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu'
-      ]
-    });
+  const page = await browser.newPage();
 
-    const page = await browser.newPage();
-    
-    // Set user agent
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    
-    // Navigate to Zoom URL
-    await page.goto(zoomUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-    
-    // Wait for video element or download link
-    await page.waitForSelector('video, a[href*=".mp4"]', { timeout: 15000 });
-    
-    // Extract MP4 URL
-    const extractedData = await page.evaluate(() => {
-      // Try to find video element source
-      const videoElement = document.querySelector('video') as HTMLVideoElement;
-      if (videoElement && videoElement.src) {
-        return {
-          mp4Url: videoElement.src,
-          referer: window.location.href,
-          cookieHeader: document.cookie
-        };
-      }
-      
-      // Try to find download link
-      const downloadLink = document.querySelector('a[href*=".mp4"]') as HTMLAnchorElement;
-      if (downloadLink && downloadLink.href) {
-        return {
-          mp4Url: downloadLink.href,
-          referer: window.location.href,
-          cookieHeader: document.cookie
-        };
-      }
-      
-      // Look for any URL in scripts that contains .mp4
-      const scripts = document.querySelectorAll('script');
-      for (const script of scripts) {
-        const content = script.textContent || '';
-        const mp4Match = content.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/);
-        if (mp4Match) {
-          return {
-            mp4Url: mp4Match[0],
-            referer: window.location.href,
-            cookieHeader: document.cookie
-          };
-        }
-      }
-      
-      throw new Error('Could not find MP4 URL in Zoom page');
-    });
+  // Simulate a real user agent
+  await page.setUserAgent(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  );
 
-    return extractedData;
-
-  } finally {
-    if (browser) {
-      await browser.close();
+  // Set up network monitoring early
+  let mp4Url = "";
+  page.on("response", async (response) => {
+    const url = response.url();
+    if (url.includes(".mp4")) {
+      mp4Url = url;
+      console.log("[✔️] MP4 URL detected:", mp4Url);
     }
+  });
+
+  try {
+    console.log("[⏳] Navigating to:", zoomUrl);
+    await page.goto(zoomUrl, { waitUntil: "load", timeout: 0 }); // Disable timeout
+    
+    console.log(`[📊] Memory after page navigation:`, process.memoryUsage());
+
+    // Wait for the page to fully load with Zoom embed and cookie banner
+    console.log("[⏳] Waiting for page to fully load (3 seconds)...");
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    console.log("[✓] Initial wait completed, proceeding with interactions...");
+
+    // Handle "Accept Cookies" button (if present)
+    try {
+      console.log("[⏳] Checking for cookie banner...");
+
+      // Check for different possible cookie accept button selectors
+      const cookieSelectors = [
+        "#accept-recommended-btn-handler", // OneTrust preference center
+        "#onetrust-accept-btn-handler", // OneTrust banner
+        "button[aria-label='Accept Cookies']", // Generic
+        "button:contains('Accept Cookies')", // Text-based
+        "button:contains('Accept All Cookies')", // Alternative text
+      ];
+
+      // Try to find any of the cookie accept buttons with a longer timeout
+      await page.waitForFunction(
+        (selectors) => {
+          return selectors.some((selector) => document.querySelector(selector));
+        },
+        { timeout: 5000 },
+        cookieSelectors
+      );
+
+      // Click the first found cookie accept button
+      console.log("[🍪] Cookie banner detected. Accepting cookies...");
+      await page.evaluate((selectors) => {
+        for (const selector of selectors) {
+          const button = document.querySelector(selector);
+          if (button) {
+            console.log("Found and clicking:", selector);
+            (button as HTMLElement).click();
+            return true;
+          }
+        }
+        return false;
+      }, cookieSelectors);
+
+      // Wait a moment for the banner to disappear and page to settle
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      console.log("[✓] Cookies accepted.");
+    } catch (cookieError) {
+      console.warn(
+        "[⚠️] No cookie banner detected or failed to click:",
+        cookieError.message
+      );
+    }
+
+    // Wait for and click on the video play button
+    try {
+      console.log("[⏳] Looking for video player elements...");
+
+      // Add multiple possible play button selectors based on the screenshot
+      const playButtonSelectors = [
+        ".vjs-big-play-button",
+        ".playbar__playButton",
+        'button[aria-label="play"]',
+        '[role="button"][aria-label="play"]',
+        ".play-button",
+        "button.play-control",
+        'button[title="Play"]',
+        'div[role="button"][title="Play"]',
+        "button > span.play-icon",
+        'svg[aria-label="play"]',
+      ];
+
+      // Try to wait for any play button to become visible
+      console.log("[⏳] Waiting for play button to appear...");
+      await page.waitForFunction(
+        (selectors) => {
+          return selectors.some((selector) => {
+            const el = document.querySelector(selector);
+            return el && (selector === "video" || (el as HTMLElement).offsetParent !== null); // Check if visible
+          });
+        },
+        { timeout: 10000 },
+        playButtonSelectors
+      );
+
+      // Click the first visible play button
+      console.log("[▶️] Play button found. Clicking to start video...");
+      const clicked = await page.evaluate((selectors) => {
+        for (const selector of selectors) {
+          const element = document.querySelector(selector);
+          if (element) {
+            if (selector === "video") {
+              (element as HTMLVideoElement).play();
+              console.log("Direct video play method used");
+            } else if ((element as HTMLElement).offsetParent !== null) {
+              (element as HTMLElement).click();
+              console.log("Clicked play button:", selector);
+            } else {
+              continue; // Element not visible, try next
+            }
+            return true;
+          }
+        }
+        return false;
+      }, playButtonSelectors);
+
+      if (!clicked) {
+        console.log("[⚠️] Could not click any play button automatically");
+      } else {
+        console.log("[✓] Video playback initiated.");
+      }
+    } catch (playError) {
+      console.warn(
+        "[⚠️] Could not find or click play button:",
+        playError.message
+      );
+    }
+
+    // Capture cookies
+    const cookies = await page.cookies();
+    const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+
+    // Wait longer to ensure all requests are captured
+    if (!mp4Url) {
+      console.log("[⏳] Waiting to capture MP4 URL (5 seconds)...");
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+
+    const referer = page.url();
+    console.log("[✔️] Referer:", referer);
+    console.log("[✔️] Cookie length:", cookieHeader.length);
+
+    // Close the browser after extraction
+    await browser.close();
+    
+    console.log(`[📊] Memory after browser close:`, process.memoryUsage());
+
+    if (!mp4Url) {
+      console.error("[❌] Failed to extract MP4 URL from Zoom recording");
+      throw new Error("Failed to extract MP4 URL from Zoom recording");
+    }
+
+    console.log(`[✅] Successfully extracted MP4 URL: ${mp4Url}`);
+    return {
+      mp4Url,
+      referer,
+      cookieHeader
+    };
+  } catch (err) {
+    console.error("[❌] Error during extraction:", err.message);
+    await browser.close();
+    console.log(`[📊] Memory after browser close (error case):`, process.memoryUsage());
+    throw err;
   }
 }
 
