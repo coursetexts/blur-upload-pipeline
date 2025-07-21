@@ -450,7 +450,7 @@ jobs:
           --strict-host-key-checking=no \
           --quiet
           
-    - name: Create environment file on VM
+    - name: Create environment file on VM (if not exists)
       run: |
         # Create .env file with secrets
         cat > .env.production << 'EOF'
@@ -461,18 +461,51 @@ jobs:
         ENCRYPTION_SALT=${{ secrets.ENCRYPTION_SALT }}
         NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
         FACE_PROCESSOR_URL=http://face-processor:5000
-        JOB_PROCESSING_INTERVAL=43200000
+        JOB_PROCESSING_INTERVAL=300000
         TOKEN_CLEANUP_INTERVAL=43200000
         HEALTH_CHECK_PASSWORD=${{ secrets.HEALTH_CHECK_PASSWORD }}
+        NOTION_TOKEN=${{ secrets.NOTION_TOKEN }}
+        NOTION_PARENT_PAGE_ID=18567cdbb23f80c08c1cdbbcdab33635
+        NOTION_VERSION=2022-06-28
         EOF
         
-        # Copy environment file
-        gcloud compute scp .env.production \
-          $VM_INSTANCE:~/pipeline-deployment/.env \
+        # Only copy if .env doesn't exist
+        gcloud compute ssh $VM_INSTANCE \
           --zone=$VM_ZONE \
           --ssh-key-file=/tmp/ssh_key \
           --strict-host-key-checking=no \
-          --quiet
+          --quiet \
+          --command="
+            if [ -f ~/pipeline-deployment/.env ]; then
+              echo '✅ .env file already exists on VM, preserving it'
+              echo '📋 Current contents:'
+              cat ~/pipeline-deployment/.env
+            else
+              echo '📝 No .env file found, will upload from GitHub secrets'
+              # Will upload after this command
+            fi
+          "
+        
+        # Check if we need to upload the file
+        ENV_EXISTS=$(gcloud compute ssh $VM_INSTANCE \
+          --zone=$VM_ZONE \
+          --ssh-key-file=/tmp/ssh_key \
+          --strict-host-key-checking=no \
+          --quiet \
+          --command="[ -f ~/pipeline-deployment/.env ] && echo 'exists' || echo 'missing'")
+        
+        if [ "$ENV_EXISTS" = "missing" ]; then
+          echo "📤 Uploading .env file to VM..."
+          gcloud compute scp .env.production \
+            $VM_INSTANCE:~/pipeline-deployment/.env \
+            --zone=$VM_ZONE \
+            --ssh-key-file=/tmp/ssh_key \
+            --strict-host-key-checking=no \
+            --quiet
+          echo "✅ Environment file created on VM"
+        else
+          echo "⏭️ Skipping .env upload (file already exists)"
+        fi
           
     - name: Deploy to VM
       run: |
