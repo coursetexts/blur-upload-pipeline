@@ -49,6 +49,41 @@ def get_person_embeddings(image_directory, extractor):
     features = extractor(images)
     return list(features.cpu().numpy())
 
+def get_person_embeddings_from_image(image, person_detector, extractor, debugging=False):
+    """Get embeddings for persons detected in a single image"""
+    if debugging:
+        print(f"Processing single image for person embeddings...")
+    
+    # Run person detection
+    results = person_detector(image, verbose=False)[0]
+    person_crops = []
+    
+    # Extract person crops
+    for result in results.boxes.data:
+        if result[5] == 0 and result[4] >= 0.15:  # Class 0 is person, confidence >= 0.15
+            x1, y1, x2, y2 = map(int, result[:4].cpu().numpy())
+            person_crop = image[y1:y2, x1:x2]
+            if person_crop.size > 0:  # Ensure crop is valid
+                person_crop = resize_for_reid(person_crop)
+                person_crops.append(person_crop)
+    
+    if not person_crops:
+        if debugging:
+            print("No persons detected in image")
+        return []
+    
+    if debugging:
+        print(f"Found {len(person_crops)} persons in image")
+    
+    # Get embeddings for all detected persons
+    features = extractor(person_crops)
+    embeddings = list(features.cpu().numpy())
+    
+    if debugging:
+        print(f"Generated {len(embeddings)} embeddings")
+    
+    return embeddings
+
 def compare_embeddings(embedding, target_embeddings, threshold=0.70):
     """Compare person embeddings using average cosine similarity"""
     if embedding is None or not target_embeddings:

@@ -26,7 +26,8 @@ from deface.centerface import CenterFace
 from tracking import init_face_tracker, update_face_tracker, recover_tracking
 from recognition import (
     resize_for_reid, 
-    get_person_embeddings, 
+    get_person_embeddings,
+    get_person_embeddings_from_image,  # Add this new import
     compare_embeddings, 
     find_person_in_frame
 )
@@ -127,7 +128,7 @@ def process_video_with_selective_blurring(
             if image is None:
                 print(f"Warning: Could not load image {img_path}")
                 continue
-            embeddings = get_person_embeddings(image, person_detector, extractor, debugging=debugging)
+            embeddings = get_person_embeddings_from_image(image, person_detector, extractor, debugging=debugging)
             target_embeddings.extend(embeddings)
             if debugging:
                 print(f"Loaded {len(embeddings)} embeddings from {img_file}")
@@ -920,7 +921,7 @@ def main():
             print(f"\nProcessing folder: {video_folder}")
             print(f"Loading target person images from: {target_person_dir}")
             
-            target_embeddings = get_person_embeddings(target_person_dir, extractor)
+            target_embeddings = get_person_embeddings_from_image(target_person_dir, person_detector, extractor, debugging=args.debugging)
             if not target_embeddings:
                 print(f"Warning: Could not load any valid target person images from {target_person_dir}")
                 continue
