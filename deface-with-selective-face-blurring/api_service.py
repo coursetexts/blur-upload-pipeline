@@ -88,15 +88,26 @@ def process_video():
         
         logger.info(f"Found {len(target_images)} target person images")
         
+        # Sanitize output path to avoid FFMPEG issues with spaces and special characters
+        output_dir = os.path.dirname(output_path)
+        output_filename = os.path.basename(output_path)
+        
+        # Replace spaces and special characters in filename
+        import re
+        sanitized_filename = re.sub(r'[^\w\-_\.]', '_', output_filename)
+        sanitized_output_path = os.path.join(output_dir, sanitized_filename)
+        
+        logger.info(f"Sanitized output path: {sanitized_output_path}")
+        
         # Create output directory if it doesn't exist
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
         
         # Process the video using the deface library
         try:
             result = process_video_with_selective_blurring(
                 video_path=video_path,
                 target_person_dir=target_person_dir,
-                output_path=output_path,
+                output_path=sanitized_output_path,
                 thresh=options.get('thresh', 0.4),
                 reid_threshold=options.get('reid_threshold', 0.7),
                 max_frames_without_faces=options.get('max_frames_without_faces', 30),
@@ -109,7 +120,7 @@ def process_video():
             return jsonify({
                 "success": True,
                 "job_id": job_id,
-                "output_path": output_path,
+                "output_path": sanitized_output_path,
                 "processing_stats": result
             }), 200
             
