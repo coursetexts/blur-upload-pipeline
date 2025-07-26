@@ -17,6 +17,7 @@ import imageio
 import imageio.v2 as iio
 from ultralytics import YOLO
 from PIL import Image
+import skimage.draw
 
 import torchreid
 
@@ -142,9 +143,9 @@ def process_video_with_selective_blurring(
     
     # Process the video using the existing video processing function
     try:
-        result = process_video(
-            input_vid=video_path,
-            output_vid=output_path,
+        result = video_detect(
+            ipath=video_path,
+            opath=output_path,
             enable_preview=enable_preview,
             centerface=centerface,
             threshold=thresh,
@@ -164,8 +165,9 @@ def process_video_with_selective_blurring(
             mask_scale=mask_scale,
             keep_audio=keep_audio,
             ffmpeg_config=ffmpeg_config,
-            keep_metadata=keep_metadata,
-            replacewith=replacewith
+            replacewith=replacewith,
+            cam=False,
+            nested=False
         )
         
         print(f"Successfully processed video: {video_path}")
