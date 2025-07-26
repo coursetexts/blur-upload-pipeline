@@ -116,8 +116,16 @@ def process_video():
         sanitized_output_filename = re.sub(r'[^\w\-_\.]', '_', output_filename)
         sanitized_output_path = os.path.join(output_dir, sanitized_output_filename)
         
+        logger.info(f"Original input path: {video_path}")
         logger.info(f"Sanitized input path: {sanitized_input_path}")
+        logger.info(f"Original output path: {output_path}")
         logger.info(f"Sanitized output path: {sanitized_output_path}")
+        
+        # Additional debug info
+        logger.info(f"Input file exists: {os.path.exists(video_path)}")
+        logger.info(f"Sanitized input file exists: {os.path.exists(sanitized_input_path)}")
+        if os.path.exists(video_path):
+            logger.info(f"Input file size: {os.path.getsize(video_path)} bytes")
         
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)

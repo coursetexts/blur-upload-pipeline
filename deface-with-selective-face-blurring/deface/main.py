@@ -405,6 +405,13 @@ def video_detect(
     """
 
     # Initialize video reader with debug parameters if specified
+    print(f"DEBUG: Attempting to read video from: {ipath}")
+    print(f"DEBUG: File exists: {os.path.exists(ipath)}")
+    print(f"DEBUG: File is file: {os.path.isfile(ipath)}")
+    if os.path.exists(ipath):
+        print(f"DEBUG: File size: {os.path.getsize(ipath)} bytes")
+    print(f"DEBUG: FFMPEG config: {ffmpeg_config}")
+    
     try:
         if debug_start is not None:
             if debugging:
@@ -417,13 +424,17 @@ def video_detect(
             if debug_duration:
                 input_params.extend(['-t', str(debug_duration)])
             
+            print(f"DEBUG: Using input_params: {input_params}")
             reader = imageio.get_reader(ipath, size=None, fps=None, input_params=input_params)
         else:
+            print(f"DEBUG: Using standard imageio.get_reader")
             reader = imageio.get_reader(ipath, fps=ffmpeg_config.get('fps', None))
 
         meta = reader.get_meta_data()
+        print(f"DEBUG: Successfully read metadata: {meta}")
         _ = meta['size']  # Validate metadata
-    except:
+    except Exception as e:
+        print(f"DEBUG: Exception occurred: {type(e).__name__}: {str(e)}")
         if cam:
             print(f'Could not find video device {ipath}. Please set a valid input.')
         else:
