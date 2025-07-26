@@ -41,7 +41,7 @@ RUN pip3 install --no-cache-dir \
     opencv-contrib-python==4.10.0.84
 
 RUN pip3 install --no-cache-dir \
-    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 RUN pip3 install --no-cache-dir \
     deepface onnx onnxruntime-gpu
