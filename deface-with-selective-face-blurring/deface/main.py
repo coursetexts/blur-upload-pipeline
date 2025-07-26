@@ -439,6 +439,8 @@ def video_detect(
         nframes = reader.count_frames()
 
     bar = tqdm.tqdm(dynamic_ncols=True, total=nframes, position=1 if nested else 0, leave=True)
+    processed_frames = 0
+    log_interval = max(1, nframes // 20) if nframes else 100  # Log every 5% of frames
 
     # Initialize video writer if output path specified
     if opath is not None:
@@ -654,6 +656,12 @@ def video_detect(
 
         prev_frame = current_frame.copy()
         bar.update()
+        processed_frames += 1
+        
+        # Log progress every log_interval frames
+        if processed_frames % log_interval == 0 or processed_frames == nframes:
+            progress_pct = (processed_frames / nframes * 100) if nframes else 0
+            print(f"Progress: {processed_frames}/{nframes or '?'} frames ({progress_pct:.1f}%)")
 
     reader.close()
     if opath is not None:
