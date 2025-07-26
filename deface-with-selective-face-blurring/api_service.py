@@ -110,10 +110,21 @@ def process_video():
         else:
             sanitized_input_path = video_path
         
-        # Sanitize output path
+        # Sanitize output path while preserving file extension
         output_dir = os.path.dirname(output_path)
         output_filename = os.path.basename(output_path)
-        sanitized_output_filename = re.sub(r'[^\w\-_\.]', '_', output_filename)
+        
+        # Split filename and extension
+        name_part, ext_part = os.path.splitext(output_filename)
+        
+        # Sanitize only the name part, keep extension
+        sanitized_name = re.sub(r'[^\w\-_]', '_', name_part)
+        
+        # Add .mp4 extension if missing
+        if not ext_part:
+            ext_part = '.mp4'
+        
+        sanitized_output_filename = sanitized_name + ext_part
         sanitized_output_path = os.path.join(output_dir, sanitized_output_filename)
         
         logger.info(f"Original input path: {video_path}")
