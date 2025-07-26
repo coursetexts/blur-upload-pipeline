@@ -100,14 +100,37 @@ def process_video_with_selective_blurring(
     print(f"Target person directory: {target_person_dir}")
     print(f"Output path: {output_path}")
     
-    # Initialize models
+    # Initialize models with GPU debugging
     print("Initializing models...")
+    print(f"DEBUG: CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"DEBUG: CUDA device count: {torch.cuda.device_count()}")
+        print(f"DEBUG: Current CUDA device: {torch.cuda.current_device()}")
+        print(f"DEBUG: CUDA device name: {torch.cuda.get_device_name()}")
+    
+    # Initialize YOLO with explicit GPU device
     person_detector = YOLO('yolo11x.pt')
+    if torch.cuda.is_available():
+        print("DEBUG: Moving YOLO to GPU...")
+        person_detector.to('cuda')
+        print(f"DEBUG: YOLO device: {person_detector.device}")
+    else:
+        print("DEBUG: YOLO staying on CPU - CUDA not available")
+    
+    # Initialize TorchReid with GPU
+    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"DEBUG: TorchReid using device: {device_str}")
     extractor = torchreid.utils.FeatureExtractor(
         model_name='osnet_x1_0',
         model_path='./models/osnet_ms_d_c.pth.tar',
-        device='cuda' if torch.cuda.is_available() else 'cpu'
+        device=device_str
     )
+    
+    # Initialize CenterFace with GPU provider priority
+    if execution_provider is None and torch.cuda.is_available():
+        execution_provider = 'CUDAExecutionProvider'
+        print("DEBUG: Forcing CenterFace to use CUDAExecutionProvider")
+    
     centerface = CenterFace(in_shape=in_shape, backend=backend, override_execution_provider=execution_provider)
     
     # Get target person embeddings
@@ -907,15 +930,31 @@ def main():
     if replacewith == "img":
             replaceimg = imageio.imread(args.replaceimg)
 
-    # Initialize models
+    # Initialize models with GPU support
     print("Initializing models...")
+    print(f"DEBUG: CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"DEBUG: CUDA device count: {torch.cuda.device_count()}")
+        print(f"DEBUG: CUDA device name: {torch.cuda.get_device_name()}")
+    
     person_detector = YOLO('yolo11x.pt')
-    # face_detector = YOLO('face_yolov9c.pt')
+    if torch.cuda.is_available():
+        person_detector.to('cuda')
+        print("DEBUG: YOLO moved to GPU")
+    
+    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"DEBUG: TorchReid using device: {device_str}")
     extractor = torchreid.utils.FeatureExtractor(
         model_name='osnet_x1_0',
         model_path='./models/osnet_ms_d_c.pth.tar',
-        device='cuda' if torch.cuda.is_available() else 'cpu'
+        device=device_str
     )
+    
+    # Force GPU execution provider for ONNX if available
+    if execution_provider is None and torch.cuda.is_available():
+        execution_provider = 'CUDAExecutionProvider'
+        print("DEBUG: Forcing CenterFace to use CUDAExecutionProvider")
+    
     centerface = CenterFace(in_shape=in_shape, backend=backend, override_execution_provider=execution_provider)
 
     # Verify input directory exists
