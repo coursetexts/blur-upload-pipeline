@@ -45,9 +45,9 @@ export class FaceProcessingClient {
   private baseUrl: string;
   private timeout: number;
 
-  constructor(baseUrl: string = 'http://face-processor:5000', timeout: number = 300000) {
+  constructor(baseUrl: string = 'http://face-processor:5000', timeout: number = 36000000) {
     this.baseUrl = baseUrl;
-    this.timeout = timeout; // 5 minutes default timeout for video processing
+    this.timeout = timeout; // 10 hours default timeout for video processing (increased from 5 minutes)
   }
 
   /**
