@@ -73,6 +73,9 @@ def process_video():
         if not os.path.exists(video_path):
             return jsonify({"error": f"Video file not found: {video_path}"}), 404
         
+        if not os.path.isfile(video_path):
+            return jsonify({"error": f"Video path is not a file: {video_path}"}), 404
+        
         if not os.path.exists(target_person_dir):
             return jsonify({"error": f"Target person directory not found: {target_person_dir}"}), 404
         
@@ -88,15 +91,32 @@ def process_video():
         
         logger.info(f"Found {len(target_images)} target person images")
         
-        # Sanitize output path to avoid FFMPEG issues with spaces and special characters
+        # Sanitize both input and output paths to avoid FFMPEG issues with spaces and special characters
+        import re
+        
+        # Sanitize input video path
+        input_dir = os.path.dirname(video_path)
+        input_filename = os.path.basename(video_path)
+        sanitized_input_filename = re.sub(r'[^\w\-_\.]', '_', input_filename)
+        sanitized_input_path = os.path.join(input_dir, sanitized_input_filename)
+        
+        # Create symbolic link for input if needed
+        input_symlink_created = False
+        if sanitized_input_path != video_path:
+            if not os.path.exists(sanitized_input_path):
+                os.symlink(video_path, sanitized_input_path)
+                input_symlink_created = True
+                logger.info(f"Created input symlink: {sanitized_input_path}")
+        else:
+            sanitized_input_path = video_path
+        
+        # Sanitize output path
         output_dir = os.path.dirname(output_path)
         output_filename = os.path.basename(output_path)
+        sanitized_output_filename = re.sub(r'[^\w\-_\.]', '_', output_filename)
+        sanitized_output_path = os.path.join(output_dir, sanitized_output_filename)
         
-        # Replace spaces and special characters in filename
-        import re
-        sanitized_filename = re.sub(r'[^\w\-_\.]', '_', output_filename)
-        sanitized_output_path = os.path.join(output_dir, sanitized_filename)
-        
+        logger.info(f"Sanitized input path: {sanitized_input_path}")
         logger.info(f"Sanitized output path: {sanitized_output_path}")
         
         # Create output directory if it doesn't exist
@@ -105,7 +125,7 @@ def process_video():
         # Process the video using the deface library
         try:
             result = process_video_with_selective_blurring(
-                video_path=video_path,
+                video_path=sanitized_input_path,
                 target_person_dir=target_person_dir,
                 output_path=sanitized_output_path,
                 thresh=options.get('thresh', 0.4),
@@ -117,6 +137,14 @@ def process_video():
             
             logger.info(f"Video processing completed for job {job_id}")
             
+            # Clean up input symlink if we created one
+            if input_symlink_created and os.path.exists(sanitized_input_path):
+                try:
+                    os.unlink(sanitized_input_path)
+                    logger.info("Cleaned up input symlink")
+                except Exception as e:
+                    logger.warning(f"Could not clean up input symlink: {e}")
+            
             return jsonify({
                 "success": True,
                 "job_id": job_id,
@@ -126,6 +154,15 @@ def process_video():
             
         except Exception as processing_error:
             logger.error(f"Error during video processing for job {job_id}: {str(processing_error)}")
+            
+            # Clean up input symlink if we created one (even on error)
+            if input_symlink_created and os.path.exists(sanitized_input_path):
+                try:
+                    os.unlink(sanitized_input_path)
+                    logger.info("Cleaned up input symlink after error")
+                except Exception as e:
+                    logger.warning(f"Could not clean up input symlink after error: {e}")
+            
             return jsonify({
                 "error": f"Video processing failed: {str(processing_error)}"
             }), 500
