@@ -455,12 +455,25 @@ def video_detect(
 
     # Initialize video writer if output path specified
     if opath is not None:
+        print(f"DEBUG: Setting up video writer for output: {opath}")
+        print(f"DEBUG: Output path exists: {os.path.exists(opath)}")
+        print(f"DEBUG: Output directory: {os.path.dirname(opath)}")
+        print(f"DEBUG: Output directory exists: {os.path.exists(os.path.dirname(opath))}")
+        
         _ffmpeg_config = ffmpeg_config.copy()
         _ffmpeg_config.setdefault('fps', meta['fps'])
         if keep_audio and meta.get('audio_codec'):
             _ffmpeg_config.setdefault('audio_path', ipath)
             _ffmpeg_config.setdefault('audio_codec', 'copy')
-        writer = imageio.get_writer(opath, format='FFMPEG', mode='I', **_ffmpeg_config)
+        
+        print(f"DEBUG: Final FFMPEG config for writer: {_ffmpeg_config}")
+        
+        try:
+            writer = imageio.get_writer(opath, format='FFMPEG', mode='I', **_ffmpeg_config)
+            print(f"DEBUG: Video writer created successfully")
+        except Exception as writer_error:
+            print(f"DEBUG: Video writer creation failed: {type(writer_error).__name__}: {str(writer_error)}")
+            raise
 
     # Initialize tracking state variables
     face_tracker = None  # Active tracker for target person
