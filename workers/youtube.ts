@@ -653,14 +653,17 @@ export async function uploadLocalFileToYoutube(
   description: string;
   url: string;
 }> {
-  const { google } = await import('googleapis');
-  const { youtube_v3 } = google;
-  const { OAuth2 } = google.auth;
+  // Use existing imports - OAuth2Client and youtube_v3 are already imported at the top
+  const oauth2Client = new OAuth2Client(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    `${baseUrl}/api/auth/callback/google`
+  );
 
-  // Setup OAuth2 client
-  const oauth2Client = new OAuth2();
+  // Set the credentials from the session
   oauth2Client.setCredentials({
     access_token: session.accessToken,
+    refresh_token: session.refreshToken,
   });
 
   console.log("Initialized YouTube client with access token for local upload");
