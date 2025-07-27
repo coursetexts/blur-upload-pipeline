@@ -492,9 +492,8 @@ async function createNotionPageForCourse(courseCode: string) {
   }
 }
 
-// Export worker functions for testing
 /**
- * Upload a processed video file to YouTube
+ * Upload a processed video file to YouTube from local file stream
  */
 async function uploadProcessedVideo(
   videoStream: fs.ReadStream,
@@ -509,12 +508,12 @@ async function uploadProcessedVideo(
   description: string;
   url: string;
 }> {
-  const { uploadWithRetry } = await import('./youtube');
+  const { uploadLocalFileToYoutube } = await import('./youtube');
   
-  // Convert the file stream back to the format expected by uploadWithRetry
-  // We'll modify this to work with local files instead of remote streams
-  return await uploadWithRetry(
-    { streamUrl: 'local-file', fileName: fileName },
+  // Use new function that handles local files directly
+  return await uploadLocalFileToYoutube(
+    videoStream,
+    fileName,
     session,
     instructor,
     courseId

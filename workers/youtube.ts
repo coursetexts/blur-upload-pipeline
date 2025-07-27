@@ -7,6 +7,7 @@ import { encrypt } from "./encryption";
 import prisma from "./lib/prisma";
 import puppeteer from "puppeteer";
 import { execSync } from "child_process";
+import fs from "fs";
 
 dotenv.config();
 
@@ -633,5 +634,84 @@ async function extractZoomMp4Url(zoomUrl: string): Promise<{mp4Url: string, page
     await browser.close();
     console.log(`[📊] Memory after browser close (error case):`, process.memoryUsage());
     throw err;
+  }
+}
+
+/**
+ * Upload a local video file directly to YouTube (for processed videos)
+ */
+export async function uploadLocalFileToYoutube(
+  videoStream: fs.ReadStream,
+  videoTitle: string,
+  session: Session,
+  instructor: string,
+  courseId: string
+): Promise<{
+  success: boolean;
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+}> {
+  const { google } = await import('googleapis');
+  const { youtube_v3 } = google;
+  const { OAuth2 } = google.auth;
+
+  // Setup OAuth2 client
+  const oauth2Client = new OAuth2();
+  oauth2Client.setCredentials({
+    access_token: session.accessToken,
+  });
+
+  console.log("Initialized YouTube client with access token for local upload");
+
+  const youtube = new youtube_v3.Youtube({ auth: oauth2Client });
+  const videoDescription = `Class released with Professor ${instructor}'s full permission to share and distribute their materials for ${courseId}. This video is part of our ongoing effort to provide high-quality educational content to students, educators, and lifelong learners. You can access the rest of the class's materials at https://coursetexts.org/c/${courseId}. \n\n For more resources and lectures, visit our website: coursetexts.org.`;
+
+  try {
+    console.log(`Uploading local processed video: ${videoTitle}`);
+
+    // Upload the video directly from the local stream
+    const youtubeResponse = await youtube.videos.insert({
+      part: ["snippet,status"],
+      requestBody: {
+        snippet: {
+          title: videoTitle,
+          description: videoDescription,
+          categoryId: "22", // Category for "People & Blogs"
+        },
+        status: {
+          privacyStatus: "unlisted", // Options: public, private, unlisted
+        },
+      },
+      media: {
+        body: videoStream, // Use the local file stream directly
+      },
+    });
+
+    console.log(
+      `Processed video uploaded successfully: https://www.youtube.com/watch?v=${youtubeResponse.data.id}`
+    );
+
+    if (youtubeResponse.data?.id && youtubeResponse.data.snippet?.title) {
+      return {
+        success: true,
+        id: youtubeResponse.data.id,
+        title: youtubeResponse.data.snippet.title,
+        description: youtubeResponse.data.snippet.description!,
+        url: `https://www.youtube.com/watch?v=${youtubeResponse.data.id}`,
+      };
+    } else {
+      throw new Error("Incomplete response from YouTube");
+    }
+  } catch (error: unknown) {
+    console.error("Error during local video upload:", error);
+    return {
+      success: false,
+      id: "",
+      title: "",
+      description: "",
+      url: "",
+    };
   }
 }
