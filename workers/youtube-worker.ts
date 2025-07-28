@@ -338,15 +338,15 @@ async function processJobs() {
 
       if (result && result.success) {
         // Step 7: Cleanup temporary files
-        console.log(`Cleaning up temporary files for job ${job.id}...`);
-        try {
-          if (fs.existsSync(sharedPaths.jobDir)) {
-            fs.rmSync(sharedPaths.jobDir, { recursive: true, force: true });
-            console.log(`Cleaned up job directory: ${sharedPaths.jobDir}`);
-          }
-        } catch (cleanupError) {
-          console.warn(`Failed to cleanup job directory: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
-        }
+        // console.log(`Cleaning up temporary files for job ${job.id}...`);
+        // try {
+        //   if (fs.existsSync(sharedPaths.jobDir)) {
+        //     fs.rmSync(sharedPaths.jobDir, { recursive: true, force: true });
+        //     console.log(`Cleaned up job directory: ${sharedPaths.jobDir}`);
+        //   }
+        // } catch (cleanupError) {
+        //   console.warn(`Failed to cleanup job directory: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        // }
 
         // Force GC after successful upload as it's memory intensive
         if (global.gc) {
@@ -377,14 +377,14 @@ async function processJobs() {
         console.log(`Job ${job.id} completed successfully.`);
       } else {
         // Cleanup on failure
-        console.log(`Cleaning up temporary files after failure for job ${job.id}...`);
-        try {
-          if (fs.existsSync(sharedPaths.jobDir)) {
-            fs.rmSync(sharedPaths.jobDir, { recursive: true, force: true });
-          }
-        } catch (cleanupError) {
-          console.warn(`Failed to cleanup after failure: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
-        }
+        // console.log(`Cleaning up temporary files after failure for job ${job.id}...`);
+        // try {
+        //   if (fs.existsSync(sharedPaths.jobDir)) {
+        //     fs.rmSync(sharedPaths.jobDir, { recursive: true, force: true });
+        //   }
+        // } catch (cleanupError) {
+        //   console.warn(`Failed to cleanup after failure: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        // }
       }
     } catch (error: unknown) {
       let errorMessage = '';
