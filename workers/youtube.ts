@@ -666,6 +666,29 @@ export async function uploadLocalFileToYoutube(
     refresh_token: session.refreshToken,
   });
 
+  // Refresh the access token (CRITICAL - this was missing!)
+  const { credentials } = await oauth2Client.refreshAccessToken();
+  
+  // Update the database with the new access token
+  const encryptedAccessToken = encrypt(credentials.access_token!);
+  
+  const last = await prisma.tokens.findFirst({
+    orderBy: {
+      id: 'desc'
+    }
+  });
+
+  if (last) {
+    await prisma.tokens.update({
+      where: { id: last.id },
+      data: {
+        accessToken: encryptedAccessToken as unknown as string,
+      },
+    });
+  } else {
+    throw new Error("Token not found for refresh");
+  }
+
   console.log("Initialized YouTube client with access token for local upload");
 
   const youtube = new youtube_v3.Youtube({ auth: oauth2Client });
