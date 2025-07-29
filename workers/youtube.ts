@@ -653,36 +653,33 @@ export async function uploadLocalFileToYoutube(
   description: string;
   url: string;
 }> {
-  // Use existing imports - OAuth2Client and youtube_v3 are already imported at the top
+  // Use existing OAuth setup pattern
   const oauth2Client = new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     `${baseUrl}/api/auth/callback/google`
   );
 
-  // Set the credentials from the session
   oauth2Client.setCredentials({
     access_token: session.accessToken,
     refresh_token: session.refreshToken,
   });
 
-  // Refresh the access token (CRITICAL - this was missing!)
+  // Token refresh (EXACTLY like working function)
   const { credentials } = await oauth2Client.refreshAccessToken();
-  
-  // Update the database with the new access token
-  const encryptedAccessToken = encrypt(credentials.access_token!);
-  
+  oauth2Client.setCredentials(credentials);
+
   const last = await prisma.tokens.findFirst({
-    orderBy: {
-      id: 'desc'
-    }
+    where: { expiresAt: { gt: new Date() } },
   });
+
+  const encryptedAccessToken = await encrypt(credentials.access_token!); // AWAIT ADDED!
 
   if (last) {
     await prisma.tokens.update({
       where: { id: last.id },
       data: {
-        accessToken: encryptedAccessToken as unknown as string,
+        accessToken: encryptedAccessToken,
       },
     });
   } else {
