@@ -266,7 +266,7 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
       
       // Group files by type (similar to frontend logic)
       const mainFiles = sortedFiles.filter(file => 
-        file.type === "main" || file.type === "file" || file.type === "assignmentmain"
+        file.type === "main" || file.type === "file" || file.type === "page" || file.type === "assignmentmain"
       );
       const supplementaryFiles = sortedFiles.filter(file => 
         file.type === "supplementary" || file.type === "assignmentsupplementary"
