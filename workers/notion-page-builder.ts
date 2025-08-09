@@ -1,8 +1,24 @@
 import axios from 'axios';
 import * as dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
+import { renameFilesForNotion, renameVideosForNotion, FileData, VideoData } from './gemini';
+import { renameFilesForNotionOpenAI, renameVideosForNotionOpenAI } from './openai';
 
 dotenv.config();
+
+// Helper function to determine which AI service to use
+function getAIService() {
+  const useOpenAI = process.env.USE_OPENAI === 'true';
+  const hasOpenAIKey = process.env.OPENAI_API_KEY;
+  const hasGeminiKey = process.env.GOOGLE_API_KEY;
+  
+  if (useOpenAI && hasOpenAIKey) {
+    return 'openai';
+  } else if (hasGeminiKey) {
+    return 'gemini';
+  }
+  return 'none';
+}
 
 // Helper function to construct GCP URLs like the frontend does
 function constructGCPFileURL(file: any): string {
@@ -190,7 +206,39 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
         }
       });
 
+      // Use AI to rename videos if available
+      let renamedVideos: Record<string, string> = {};
+      const aiService = getAIService();
+      
+      if (aiService !== 'none' && course.videos.length > 0) {
+        try {
+          console.log(`🤖 Using ${aiService.toUpperCase()} to rename ${course.videos.length} videos for course ${courseCode}`);
+          const videoData: VideoData[] = course.videos.map((video: any) => ({
+            title: video.title,
+            url: video.url
+          }));
+          
+          if (aiService === 'openai') {
+            renamedVideos = await renameVideosForNotionOpenAI(videoData);
+          } else {
+            renamedVideos = await renameVideosForNotion(videoData);
+          }
+        } catch (error) {
+          console.warn(`⚠️ ${aiService.toUpperCase()} video renaming failed, using original titles:`, error.message);
+          // Fallback to original titles
+          course.videos.forEach((video: any) => {
+            renamedVideos[video.title] = video.title;
+          });
+        }
+      } else {
+        // No AI service available or no videos, use original titles
+        course.videos.forEach((video: any) => {
+          renamedVideos[video.title] = video.title;
+        });
+      }
+
       course.videos.forEach((video: any) => {
+        const displayTitle = renamedVideos[video.title] || video.title;
         blocks.push({
           object: "block",
           type: "bulleted_list_item",
@@ -199,7 +247,7 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
               {
                 type: "text",
                 text: {
-                  content: video.title,
+                  content: displayTitle,
                   link: {
                     url: video.url
                   }
@@ -230,7 +278,7 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
     // Process modules (similar to frontend ModuleComponent)
     const sortedModules = course.modules.sort((a, b) => a.position - b.position);
     
-    sortedModules.forEach((module: any) => {
+    for (const module of sortedModules) {
       // Skip default module heading
       if (module.name !== "Default") {
         blocks.push({
@@ -275,8 +323,41 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
         file.type === "assignment"
       );
 
-      // Add main files
+      // Use AI to rename files if available
+      let renamedFiles: Record<string, string> = {};
+      const aiService = getAIService();
+      
+      if (aiService !== 'none' && mainFiles.length > 0) {
+        try {
+          console.log(`🤖 Using ${aiService.toUpperCase()} to rename ${mainFiles.length} files for module ${module.name}`);
+          const fileData: FileData[] = mainFiles.map(file => ({
+            displayName: file.displayName,
+            type: file.type,
+            url: file.url
+          }));
+          
+          if (aiService === 'openai') {
+            renamedFiles = await renameFilesForNotionOpenAI(fileData);
+          } else {
+            renamedFiles = await renameFilesForNotion(fileData);
+          }
+        } catch (error) {
+          console.warn(`⚠️ ${aiService.toUpperCase()} file renaming failed, using original names:`, error.message);
+          // Fallback to original names
+          mainFiles.forEach(file => {
+            renamedFiles[file.displayName] = file.displayName.replace('.pdf', '');
+          });
+        }
+      } else {
+        // No AI service available or no files, use original names
+        mainFiles.forEach(file => {
+          renamedFiles[file.displayName] = file.displayName.replace('.pdf', '');
+        });
+      }
+
+      // Add main files with renamed titles
       mainFiles.forEach((file: any) => {
+        const displayName = renamedFiles[file.displayName] || file.displayName.replace('.pdf', '');
         blocks.push({
           object: "block",
           type: "bulleted_list_item",
@@ -285,7 +366,7 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
               {
                 type: "text",
                 text: {
-                  content: file.displayName.replace('.pdf', ''),
+                  content: displayName,
                   link: {
                     url: constructGCPFileURL(file)
                   }
@@ -377,7 +458,7 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
           });
         });
       }
-    });
+    }
 
     // Create the Notion page
     const payload: NotionPagePayload = {
