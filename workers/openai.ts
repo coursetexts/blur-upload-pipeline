@@ -42,7 +42,7 @@ async function renameFilesForNotionOpenAI(files: FileData[]) {
   try {
     console.log("Sending request to OpenAI model...");
     const response = await openai.chat.completions.create({
-      model: "gpt-4.1",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "user",
