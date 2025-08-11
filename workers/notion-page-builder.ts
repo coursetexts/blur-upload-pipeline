@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
-import { renameFilesForNotion, renameVideosForNotion, FileData, VideoData } from './gemini';
+import { renameFilesForNotion, renameVideosForNotion, groupByWeek, FileData, VideoData } from './gemini';
 import { renameFilesForNotionOpenAI, renameVideosForNotionOpenAI } from './openai';
 
 dotenv.config();
@@ -189,147 +189,39 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
       });
     }
 
-    // Videos section (if any exist)
-    if (course.videos && course.videos.length > 0) {
-      blocks.push({
-        object: "block",
-        type: "heading_2",
-        heading_2: {
-          rich_text: [
-            {
-              type: "text",
-              text: {
-                content: "Videos"
-              }
-            }
-          ]
-        }
-      });
-
-      // Use AI to rename videos if available
-      let renamedVideos: Record<string, string> = {};
-      const aiService = getAIService();
-      
-      if (aiService !== 'none' && course.videos.length > 0) {
-        try {
-          console.log(`🤖 Using ${aiService.toUpperCase()} to rename ${course.videos.length} videos for course ${courseCode}`);
-          const videoData: VideoData[] = course.videos.map((video: any) => ({
-            title: video.title,
-            url: video.url
-          }));
-          
-          if (aiService === 'openai') {
-            renamedVideos = await renameVideosForNotionOpenAI(videoData);
-          } else {
-            renamedVideos = await renameVideosForNotion(videoData);
-          }
-        } catch (error) {
-          console.warn(`⚠️ ${aiService.toUpperCase()} video renaming failed, using original titles:`, error.message);
-          // Fallback to original titles
-          course.videos.forEach((video: any) => {
-            renamedVideos[video.title] = video.title;
-          });
-        }
-      } else {
-        // No AI service available or no videos, use original titles
-        course.videos.forEach((video: any) => {
-          renamedVideos[video.title] = video.title;
-        });
-      }
-
-      course.videos.forEach((video: any) => {
-        const displayTitle = renamedVideos[video.title] || video.title;
-        blocks.push({
-          object: "block",
-          type: "bulleted_list_item",
-          bulleted_list_item: {
-            rich_text: [
-              {
-                type: "text",
-                text: {
-                  content: displayTitle,
-                  link: {
-                    url: video.url
-                  }
-                }
-              }
-            ]
-          }
-        });
-      });
-    }
-
-    // Lecture Notes section
-    blocks.push({
-      object: "block",
-      type: "heading_2",
-      heading_2: {
-        rich_text: [
-          {
-            type: "text",
-            text: {
-              content: "Lecture Notes"
-            }
-          }
-        ]
-      }
-    });
-
-    // Process modules (similar to frontend ModuleComponent)
-    const sortedModules = course.modules.sort((a, b) => a.position - b.position);
+    // Collect all files from all modules for week-based organization
+    const allCourseFiles: any[] = [];
+    const allAssignments: any[] = [];
     
-    for (const module of sortedModules) {
-      // Skip default module heading
-      if (module.name !== "Default") {
-        blocks.push({
-          object: "block",
-          type: "heading_3",
-          heading_3: {
-            rich_text: [
-              {
-                type: "text",
-                text: {
-                  content: module.name
-                }
-              }
-            ]
-          }
-        });
-      }
-
-      // Process files similar to frontend Files component
-      const allFiles = [...module.files];
+    for (const module of course.modules) {
+      // Add module files
+      allCourseFiles.push(...module.files);
       
       // Add assignment files
       if (module.assignments) {
         module.assignments.forEach((assignment: any) => {
           if (assignment.files) {
-            allFiles.push(...assignment.files);
+            allAssignments.push(...assignment.files);
           }
         });
       }
-
-      // Sort files by position
-      const sortedFiles = allFiles.sort((a, b) => a.position - b.position);
-      
-      // Group files by type (similar to frontend logic)
-      const mainFiles = sortedFiles.filter(file => 
-        file.type === "main" || file.type === "file" || file.type === "page" || file.type === "assignmentmain"
-      );
-      const supplementaryFiles = sortedFiles.filter(file => 
-        file.type === "supplementary" || file.type === "assignmentsupplementary"
-      );
-      const assignmentFiles = sortedFiles.filter(file => 
-        file.type === "assignment"
-      );
-
-      // Use AI to rename files if available
-      let renamedFiles: Record<string, string> = {};
-      const aiService = getAIService();
-      
-      if (aiService !== 'none' && mainFiles.length > 0) {
-        try {
-          console.log(`🤖 Using ${aiService.toUpperCase()} to rename ${mainFiles.length} files for module ${module.name}`);
+    }
+    
+    // Filter main files (excluding assignments)
+    const mainFiles = allCourseFiles.filter(file => 
+      (file.type === "main" || file.type === "file" || file.type === "page" || file.type === "assignmentmain") &&
+      !(file.type === "assignment" || file.type === "assignmentsupplementary")
+    );
+    
+    // Use AI to rename files and videos if available (do this BEFORE grouping so grouping uses renamed titles)
+    let renamedFiles: Record<string, string> = {};
+    let renamedVideos: Record<string, string> = {};
+    const aiService = getAIService();
+    
+    if (aiService !== 'none') {
+      try {
+        // Rename files
+        if (mainFiles.length > 0) {
           const fileData: FileData[] = mainFiles.map(file => ({
             displayName: file.displayName,
             type: file.type,
@@ -341,23 +233,183 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
           } else {
             renamedFiles = await renameFilesForNotion(fileData);
           }
-        } catch (error) {
-          console.warn(`⚠️ ${aiService.toUpperCase()} file renaming failed, using original names:`, error.message);
-          // Fallback to original names
-          mainFiles.forEach(file => {
-            renamedFiles[file.displayName] = file.displayName.replace('.pdf', '');
-          });
         }
-      } else {
-        // No AI service available or no files, use original names
+        
+        // Rename videos
+        if (course.videos && course.videos.length > 0) {
+          console.log(`🤖 Using ${aiService.toUpperCase()} to rename ${course.videos.length} videos for course ${courseCode}`);
+          const videoData: VideoData[] = course.videos.map((video: any) => ({
+            title: video.title,
+            url: video.url
+          }));
+          
+          if (aiService === 'openai') {
+            renamedVideos = await renameVideosForNotionOpenAI(videoData);
+          } else {
+            renamedVideos = await renameVideosForNotion(videoData);
+          }
+        }
+      } catch (error) {
+        console.warn(`⚠️ ${aiService.toUpperCase()} renaming failed, using original names:`, (error as any).message);
+        // Fallback to original names
         mainFiles.forEach(file => {
           renamedFiles[file.displayName] = file.displayName.replace('.pdf', '');
         });
+        course.videos?.forEach((video: any) => {
+          renamedVideos[video.title] = video.title;
+        });
       }
+    } else {
+      // No AI service available, use original names
+      mainFiles.forEach(file => {
+        renamedFiles[file.displayName] = file.displayName.replace('.pdf', '');
+      });
+      course.videos?.forEach((video: any) => {
+        renamedVideos[video.title] = video.title;
+      });
+    }
 
-      // Add main files with renamed titles
-      mainFiles.forEach((file: any) => {
+    // Group content by weeks using renamed names for extraction
+    const grouping = groupByWeek(mainFiles, course.videos || [], {
+      fileNameMap: renamedFiles,
+      videoTitleMap: renamedVideos
+    });
+
+    // Create week-based content sections
+    if (grouping.weeks.length > 0) {
+      grouping.weeks.forEach(weekGroup => {
+        // Week heading
+        blocks.push({
+          object: "block",
+          type: "heading_2",
+          heading_2: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: `Week ${weekGroup.weekNumber}`
+                }
+              }
+            ]
+          }
+        });
+
+        // Videos for this week
+        weekGroup.videos.forEach((video: any) => {
+          const displayTitle = renamedVideos[video.title] || video.title;
+          blocks.push({
+            object: "block",
+            type: "bulleted_list_item",
+            bulleted_list_item: {
+              rich_text: [
+                {
+                  type: "text",
+                  text: {
+                    content: `📹 ${displayTitle}`,
+                    link: {
+                      url: video.url
+                    }
+                  }
+                }
+              ]
+            }
+          });
+        });
+
+        // Files for this week
+        weekGroup.files.forEach((file: any) => {
+          const displayName = renamedFiles[file.displayName] || file.displayName.replace('.pdf', '');
+          blocks.push({
+            object: "block",
+            type: "bulleted_list_item",
+            bulleted_list_item: {
+              rich_text: [
+                {
+                  type: "text",
+                  text: {
+                    content: `📄 ${displayName}`,
+                    link: {
+                      url: constructGCPFileURL(file)
+                    }
+                  }
+                }
+              ]
+            }
+          });
+        });
+      });
+    }
+
+    // Supplementary (ungrouped) videos
+    if (grouping.ungroupedVideos.length > 0) {
+      blocks.push({
+        object: "block",
+        type: "heading_2",
+        heading_2: {
+          rich_text: [
+            { type: "text", text: { content: "Supplementary Videos" } }
+          ]
+        }
+      });
+
+      grouping.ungroupedVideos.forEach((video: any) => {
+        const displayTitle = renamedVideos[video.title] || video.title;
+        blocks.push({
+          object: "block",
+          type: "bulleted_list_item",
+          bulleted_list_item: {
+            rich_text: [
+              { type: "text", text: { content: `📹 ${displayTitle}`, link: { url: video.url } } }
+            ]
+          }
+        });
+      });
+    }
+
+    // Supplementary (ungrouped) files
+    if (grouping.ungroupedFiles.length > 0) {
+      blocks.push({
+        object: "block",
+        type: "heading_2",
+        heading_2: {
+          rich_text: [
+            { type: "text", text: { content: "Supplementary Files" } }
+          ]
+        }
+      });
+
+      grouping.ungroupedFiles.forEach((file: any) => {
         const displayName = renamedFiles[file.displayName] || file.displayName.replace('.pdf', '');
+        blocks.push({
+          object: "block",
+          type: "bulleted_list_item",
+          bulleted_list_item: {
+            rich_text: [
+              { type: "text", text: { content: `📄 ${displayName}`, link: { url: constructGCPFileURL(file) } } }
+            ]
+          }
+        });
+      });
+    }
+
+    // Add assignments section at the end (existing logic)
+    if (allAssignments.length > 0) {
+      blocks.push({
+        object: "block",
+        type: "heading_2",
+        heading_2: {
+          rich_text: [
+            {
+              type: "text",
+              text: {
+                content: "Assignments"
+              }
+            }
+          ]
+        }
+      });
+
+      allAssignments.forEach((file: any) => {
         blocks.push({
           object: "block",
           type: "bulleted_list_item",
@@ -366,7 +418,7 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
               {
                 type: "text",
                 text: {
-                  content: displayName,
+                  content: `📋 ${file.displayName.replace('.pdf', '')}`,
                   link: {
                     url: constructGCPFileURL(file)
                   }
@@ -376,88 +428,6 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
           }
         });
       });
-
-      // Add supplementary files
-      if (supplementaryFiles.length > 0) {
-        blocks.push({
-          object: "block",
-          type: "paragraph",
-          paragraph: {
-            rich_text: [
-              {
-                type: "text",
-                text: {
-                  content: "Supplementary"
-                },
-                annotations: {
-                  italic: true
-                }
-              }
-            ]
-          }
-        });
-
-        supplementaryFiles.forEach((file: any) => {
-          blocks.push({
-            object: "block",
-            type: "bulleted_list_item",
-            bulleted_list_item: {
-              rich_text: [
-                {
-                  type: "text",
-                  text: {
-                    content: file.displayName.replace('.pdf', ''),
-                    link: {
-                      url: constructGCPFileURL(file)
-                    }
-                  }
-                }
-              ]
-            }
-          });
-        });
-      }
-
-      // Add assignment files
-      if (assignmentFiles.length > 0) {
-        blocks.push({
-          object: "block",
-          type: "paragraph",
-          paragraph: {
-            rich_text: [
-              {
-                type: "text",
-                text: {
-                  content: "Assignments"
-                },
-                annotations: {
-                  italic: true
-                }
-              }
-            ]
-          }
-        });
-
-        assignmentFiles.forEach((file: any) => {
-          blocks.push({
-            object: "block",
-            type: "bulleted_list_item",
-            bulleted_list_item: {
-              rich_text: [
-                {
-                  type: "text",
-                  text: {
-                    content: file.displayName.replace('.pdf', ''),
-                    link: {
-                      url: constructGCPFileURL(file)
-                    }
-                  }
-                }
-              ]
-            }
-          });
-        });
-      }
     }
 
     // Create the Notion page
