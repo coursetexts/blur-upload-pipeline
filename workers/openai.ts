@@ -1,4 +1,8 @@
 import OpenAI from "openai";
+import axios from "axios";
+import pdfParse from "pdf-parse";
+import fs from "fs";
+import path from "path";
 
 // Ensure your OpenAI API Key is correctly set in environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -21,6 +25,60 @@ interface FileData {
 interface VideoData {
   title: string;
   url: string;
+}
+
+let cachedSyllabusText: string | undefined;
+
+async function tryExtractSyllabusText(files: FileData[]): Promise<string | undefined> {
+  try {
+    const syllabusCandidates = files
+      .filter(f => /syllabus/i.test(f.displayName))
+      .sort((a, b) => {
+        // Prefer explicit file types first
+        const score = (f: FileData) => (/(^|\W)file(\W|$)/i.test(f.type) ? 1 : 0);
+        return score(b) - score(a);
+      });
+
+    if (syllabusCandidates.length === 0) return undefined;
+
+    // Pick first with a usable URL
+    const target = syllabusCandidates.find(f => !!f.url);
+    if (!target || !target.url) return undefined;
+
+    const response = await axios.get<ArrayBuffer>(target.url, { responseType: "arraybuffer" });
+    const buffer = Buffer.from(response.data);
+    const parsed = await pdfParse(buffer as any);
+    const text = parsed?.text?.trim();
+    if (text) {
+      cachedSyllabusText = text;
+
+      // Write full OCR text to logs for inspection
+      try {
+        const logsDir = path.join(__dirname, "logs");
+        if (!fs.existsSync(logsDir)) {
+          fs.mkdirSync(logsDir, { recursive: true });
+        }
+        const outPath = path.join(logsDir, "syllabus-ocr.txt");
+        await fs.promises.writeFile(outPath, text, "utf-8");
+        console.log(`📄 Syllabus OCR saved to ${outPath} (${text.length} chars)`);
+      } catch (ioErr) {
+        console.warn("Failed to write syllabus OCR file:", (ioErr as any)?.message || ioErr);
+      }
+
+      // Also log a short excerpt to console
+      const preview = text.slice(0, 400).replace(/\s+/g, " ");
+      console.log(`📄 Syllabus OCR preview: "${preview}${text.length > 400 ? "…" : ""}"`);
+
+      return text;
+    }
+  } catch (err) {
+    console.warn("Syllabus OCR failed, continuing without syllabus context:", (err as any)?.message || err);
+  }
+  return undefined;
+}
+
+export function getCachedSyllabusText(): string | undefined {
+  return cachedSyllabusText;
 }
 
 // Helper: extract text from Responses API (GPT-5) shape
@@ -75,17 +133,22 @@ function parseJsonFromText(text: string, makeFallback: () => Record<string, stri
 }
 
 async function renameFilesForNotionOpenAI(files: FileData[]) {
-  const fileList = files.map(file => `${file.displayName} (${file.type})`).join('\n');
+  const fileList = files.map(file => `${file.displayName} (${file.type})${file.url ? ` -> ${file.url}` : ""}`).join('\n');
+
+  // Attempt OCR of syllabus to extract schedule/context
+  let syllabusText = cachedSyllabusText;
+  if (!syllabusText) {
+    syllabusText = await tryExtractSyllabusText(files);
+  }
+  const syllabusSnippet = syllabusText ? (syllabusText.length > 6000 ? syllabusText.slice(0, 6000) + "\n...[truncated]" : syllabusText) : undefined;
   
   const prompt = `
 You are helping organize a university course offered by a reputable university into weekly modules.
 
-Rename the following lecture note files to a consistent, human-readable format:
-- Always start with "Lecture N: " where N is the lecture number extracted from the filename if present.
-- Check the internet for the course and use the official course website to infer the lecture number if available.
-- If you cannot infer a lecture number, try to infer from a date in the filename; if the date clearly follows the previous one in sequence, assign number n+1.
-- If you can access file contents, infer the lecture number from the contents.
-- If you cannot reasonably infer a lecture number or date, do NOT invent one; use a clear descriptive title without a number.
+${syllabusSnippet ? `Syllabus (OCR, excerpt):\n${syllabusSnippet}\n\n` : ""}Rename the following lecture note files to a consistent, human-readable format:
+- Always start with "Lecture N: " where N is the lecture number extracted from the filename or inferred from the syllabus if present.
+- Prefer the syllabus schedule (dates/titles/order) to determine N. If unambiguous, assign lecture numbers based on it.
+- If you cannot infer a lecture number, use a clear descriptive title without a number.
 - Keep titles concise and professional.
 - Reply ONLY with a JSON object mapping original filenames to new titles. Do not include any markdown fences.
 
@@ -104,11 +167,17 @@ Example JSON (no markdown fences):
   };
 
   try {
+    if (syllabusSnippet) {
+      console.log(`📄 Using syllabus OCR excerpt (${syllabusSnippet.length} chars) in files prompt`);
+    } else {
+      console.log("📄 No syllabus OCR available for files prompt");
+    }
+
     console.log("Sending request to OpenAI Responses API (files)...");
     const response = await openai.responses.create({
       model: gptModel,
       input: prompt,
-      max_output_tokens: 1000,
+      max_output_tokens: 25000,
     });
 
     let text = extractTextFromResponses(response);
@@ -119,7 +188,7 @@ Example JSON (no markdown fences):
       const chatResp = await openai.chat.completions.create({
         model: fallbackChatModel,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 1000,
+        max_tokens: 1500,
         temperature: 0.3,
       });
       text = extractTextFromChat(chatResp);
@@ -144,16 +213,17 @@ Example JSON (no markdown fences):
 
 async function renameVideosForNotionOpenAI(videos: VideoData[]) {
   const videoList = videos.map(video => `${video.title} (${video.url})`).join('\n');
+
+  // Use cached syllabus OCR if available
+  const syllabusSnippet = cachedSyllabusText ? (cachedSyllabusText.length > 6000 ? cachedSyllabusText.slice(0, 6000) + "\n...[truncated]" : cachedSyllabusText) : undefined;
   
   const prompt = `
 You are helping organize a university course offered by a reputable university into weekly modules.
 
-Rename the following lecture video titles to a consistent, human-readable format:
-- Always start with "Lecture N: " where N is the lecture number extracted from the title if present (e.g., "Lec 02" => N=2).
-- Check the internet for the course and use the official course website to infer the lecture number if available.
-- If you cannot infer a lecture number, try to infer from a date in the title; if the date clearly follows the previous one in sequence, assign number n+1.
-- If you can access video contents, infer the lecture number from the contents.
-- If you cannot reasonably infer a lecture number or date, do NOT invent one; use a clear descriptive title without a number.
+${syllabusSnippet ? `Syllabus (OCR, excerpt):\n${syllabusSnippet}\n\n` : ""}Rename the following lecture video titles to a consistent, human-readable format:
+- Always start with "Lecture N: " where N is the lecture number extracted from the title or inferred from the syllabus if present.
+- Prefer the syllabus schedule (dates/titles/order) to determine N. If unambiguous, assign lecture numbers based on it.
+- If you cannot infer a lecture number, use a clear descriptive title without a number.
 - Keep titles concise and professional.
 - Reply ONLY with a JSON object mapping original titles to new titles. Do not include any markdown fences.
 
@@ -172,11 +242,17 @@ Example JSON (no markdown fences):
   };
 
   try {
+    if (syllabusSnippet) {
+      console.log(`📄 Using syllabus OCR excerpt (${syllabusSnippet.length} chars) in videos prompt`);
+    } else {
+      console.log("📄 No syllabus OCR available for videos prompt");
+    }
+
     console.log("Sending request to OpenAI Responses API (videos)...");
     const response = await openai.responses.create({
       model: gptModel,
       input: prompt,
-      max_output_tokens: 1000,
+      max_output_tokens: 25000,
     });
 
     let text = extractTextFromResponses(response);
@@ -187,7 +263,7 @@ Example JSON (no markdown fences):
       const chatResp = await openai.chat.completions.create({
         model: fallbackChatModel,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 1000,
+        max_tokens: 1500,
         temperature: 0.3,
       });
       text = extractTextFromChat(chatResp);

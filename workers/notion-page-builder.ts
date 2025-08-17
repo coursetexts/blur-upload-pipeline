@@ -222,10 +222,11 @@ export async function createOrUpdateCourseNotionPage(courseCode: string) {
       try {
         // Rename files
         if (mainFiles.length > 0) {
+          console.log(`🤖 Using ${aiService.toUpperCase()} to rename ${mainFiles.length} files for course ${courseCode}`);
           const fileData: FileData[] = mainFiles.map(file => ({
             displayName: file.displayName,
             type: file.type,
-            url: file.url
+            url: constructGCPFileURL(file)
           }));
           
           if (aiService === 'openai') {
