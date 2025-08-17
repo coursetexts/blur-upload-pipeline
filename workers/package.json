@@ -18,11 +18,12 @@
     "@google/generative-ai": "^0.24.1",
     "@googleapis/youtube": "^11.0.1",
     "@prisma/client": "5.21.1",
-    "axios": "^1.7.7",
+    "axios": "^1.11.0",
     "express": "^5.1.0",
     "express-basic-auth": "^1.2.1",
     "google-auth-library": "^9.15.1",
     "openai": "^5.12.2",
+    "pdf-parse": "^1.1.1",
     "puppeteer": "^22.0.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
