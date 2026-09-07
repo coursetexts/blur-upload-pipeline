@@ -65,22 +65,26 @@ gcloud iam service-accounts create github-actions \
   --display-name="GitHub Actions" \
   --description="Service account for GitHub Actions deployments"
 
+# Resolve the created service account from the selected project.
+GITHUB_ACTIONS_SERVICE_ACCOUNT="$(gcloud iam service-accounts list --project your-pipeline-project --filter='displayName:GitHub Actions' --format='value(email)')"
+: "${GITHUB_ACTIONS_SERVICE_ACCOUNT:?Select the GitHub Actions service account}"
+
 # Grant necessary permissions
 gcloud projects add-iam-policy-binding your-pipeline-project \
-  --member="serviceAccount:github-actions@your-pipeline-project.iam.gserviceaccount.com" \
+  --member="serviceAccount:${GITHUB_ACTIONS_SERVICE_ACCOUNT}" \
   --role="roles/compute.instanceAdmin.v1"
 
 gcloud projects add-iam-policy-binding your-pipeline-project \
-  --member="serviceAccount:github-actions@your-pipeline-project.iam.gserviceaccount.com" \
+  --member="serviceAccount:${GITHUB_ACTIONS_SERVICE_ACCOUNT}" \
   --role="roles/storage.admin"
 
 gcloud projects add-iam-policy-binding your-pipeline-project \
-  --member="serviceAccount:github-actions@your-pipeline-project.iam.gserviceaccount.com" \
+  --member="serviceAccount:${GITHUB_ACTIONS_SERVICE_ACCOUNT}" \
   --role="roles/container.admin"
 
 # Create and download service account key
 gcloud iam service-accounts keys create ~/github-actions-key.json \
-  --iam-account=github-actions@your-pipeline-project.iam.gserviceaccount.com
+  --iam-account=${GITHUB_ACTIONS_SERVICE_ACCOUNT}
 ```
 
 ## 🔐 **GitHub Secrets Configuration**
@@ -273,4 +277,4 @@ gcloud compute instances add-metadata pipeline-vm \
 
 **🎬 Your pipeline is now ready for automated GCP deployment!**
 
-After setup, every push to main will automatically deploy your updated pipeline to your GCP VM with GPU support. 
+After setup, every push to main will automatically deploy your updated pipeline to your GCP VM with GPU support.

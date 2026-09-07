@@ -1,5 +1,6 @@
-process.env.ENCRYPTION_KEY = 'test-encryption-key-12345';
-process.env.ENCRYPTION_SALT = 'test-salt-12345';
+// Ephemeral test-only values, isolated from production encryption configuration.
+process.env.ENCRYPTION_KEY = require('node:crypto').randomBytes(32).toString('hex');
+process.env.ENCRYPTION_SALT = require('node:crypto').randomBytes(16).toString('hex');
 
 import { describe, beforeAll, it, expect } from "@jest/globals";
 import { encrypt, decrypt } from "../encryption";
